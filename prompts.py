@@ -61,6 +61,28 @@ TEXT:
 
 OUTPUT:
 Bullet Summary:
+""",
+
+        "executive": f"""
+You are a summarization system for executive briefings.
+
+RULES:
+- Use ONLY the information present in the text
+- Do NOT assume, infer, or add anything not stated
+- Focus on strategic insights and actionable information
+
+TASK:
+Generate an executive summary that:
+- Leads with the most critical finding or recommendation
+- Highlights key decisions, risks, or opportunities
+- Includes relevant metrics or data points
+- Keeps language clear and direct for senior leadership
+
+TEXT:
+{text}
+
+OUTPUT:
+Executive Summary:
 """
     }
 
@@ -348,6 +370,30 @@ TEXT:
 
 OUTPUT:
 Bullet Summary:
+""",
+            "executive": f"""
+You are a summarization system for executive briefings.
+
+RULES:
+- Use ONLY the information present in the text
+- Do NOT assume, infer, or add anything not stated
+- Focus on strategic insights and actionable information
+
+TASK:
+Generate an executive summary that:
+- Leads with the most critical finding or recommendation
+- Highlights key decisions, risks, or opportunities
+- Includes relevant metrics or data points
+- Keeps language clear and direct for senior leadership
+
+ADDITIONAL USER INSTRUCTIONS:
+{user_feedback}
+
+TEXT:
+{original_text}
+
+OUTPUT:
+Executive Summary:
 """
         }
         return summary_prompts.get(summary_type, summary_prompts["brief"])

@@ -6,13 +6,17 @@ TaskType = Literal[
     "translate_en",
     "rephrase",
     "remove_repetitions",
-    "translate"
+    "translate",
+    "professional",
+    "proofread",
+    "concise",
 ]
 
 SummaryType = Literal[
     "brief",
     "detailed",
-    "bulletwise"
+    "bulletwise",
+    "executive"
 ]
 
 

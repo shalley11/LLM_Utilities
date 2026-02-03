@@ -29,6 +29,8 @@ env/
 # Logs
 logs/
 *.log
+wheels/
+wheels.tar.xz
 
 # OS
 .DS_Store
