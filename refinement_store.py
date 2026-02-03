@@ -71,7 +71,14 @@ class RefinementStore:
         db: int = REDIS_DB,
         ttl: int = REFINEMENT_TTL
     ):
-        self._redis = redis.Redis(host=host, port=port, db=db, decode_responses=True)
+        self._redis = redis.Redis(
+            host=host,
+            port=port,
+            db=db,
+            decode_responses=True,
+            socket_timeout=5,
+            socket_connect_timeout=5
+        )
         self._ttl = ttl
         self._prefix = REFINEMENT_KEY_PREFIX
         logger.info(f"[REFINE_STORE] Initialized | host={host}:{port} | db={db} | ttl={ttl}s")

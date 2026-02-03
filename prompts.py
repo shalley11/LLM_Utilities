@@ -134,11 +134,68 @@ TEXT:
 
 OUTPUT:
 Refined Text:
+""",
+
+        "professional": f"""
+You are a professional writing assistant.
+
+RULES:
+- Use ONLY the information present in the text
+- Do NOT change the meaning
+- Do NOT add new information
+
+TASK:
+Rewrite the text in a formal, professional tone suitable for business communication.
+Use precise vocabulary and proper structure.
+
+TEXT:
+{text}
+
+OUTPUT:
+Professional Text:
+""",
+
+        "concise": f"""
+You are a text condensation system.
+
+RULES:
+- Use ONLY the information present in the text
+- Do NOT remove essential meaning
+- Do NOT add new information
+
+TASK:
+Shorten the text by removing unnecessary words and redundancy.
+Keep only essential information while preserving meaning.
+
+TEXT:
+{text}
+
+OUTPUT:
+Concise Text:
+""",
+
+        "proofread": f"""
+You are a professional proofreader.
+
+RULES:
+- Preserve the original meaning
+- Do NOT add new content
+- Do NOT remove important information
+- Make minimal changes necessary
+
+TASK:
+Fix all grammar, spelling, punctuation, and clarity issues.
+
+TEXT:
+{text}
+
+OUTPUT:
+Proofread Text:
 """
     }
 
     if task not in prompts:
-        raise ValueError(f"Unsupported task. Supported tasks: summary, translate, rephrase, remove_repetitions")
+        raise ValueError(f"Unsupported task. Supported tasks: summary, translate, rephrase, remove_repetitions, professional, concise, proofread")
 
     return prompts[task]
 
@@ -168,7 +225,10 @@ def get_refinement_prompt(
         "rephrase": "rephrased text",
         "translate": "translation",
         "remove_repetitions": "refined text",
-        "translate_en": "translation"
+        "translate_en": "translation",
+        "professional": "professional text",
+        "concise": "concise text",
+        "proofread": "proofread text"
     }
 
     result_type = task_context.get(task, "text")
@@ -217,7 +277,10 @@ def get_regenerate_prompt(
         "rephrase": "Rephrase the original text",
         "translate": "Translate the original text",
         "remove_repetitions": "Remove repetitions from the original text",
-        "translate_en": "Translate the original text to English"
+        "translate_en": "Translate the original text to English",
+        "professional": "Rewrite the original text in a professional tone",
+        "concise": "Make the original text concise",
+        "proofread": "Proofread the original text"
     }
 
     base_instruction = task_instructions.get(task, "Process the original text")
