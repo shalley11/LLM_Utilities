@@ -21,10 +21,18 @@ class TextTaskRequest(BaseModel):
     text: str
     task: TaskType
     summary_type: Optional[SummaryType] = None
+    target_language: Optional[str] = Field(
+        None,
+        description="Target language for translation tasks (e.g., 'Spanish', 'French')"
+    )
     model: Optional[str] = None
     user_id: Optional[str] = Field(
         None,
         description="Optional user identifier for tracking and logging purposes"
+    )
+    user_name: Optional[str] = Field(
+        None,
+        description="Optional user name for logging and display purposes"
     )
 
 
@@ -35,6 +43,7 @@ class TextTaskResponse(BaseModel):
     model: str
     output: str
     user_id: Optional[str] = None
+    user_name: Optional[str] = None
 
 
 # =========================

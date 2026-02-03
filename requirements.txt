@@ -1,16 +1,19 @@
 # LLM_Utilities Dependencies
 
-# HTTP client for LLM API calls (Ollama/VLLM)
-requests>=2.28.0
+# Async HTTP client for LLM API calls (Ollama/VLLM)
+aiohttp>=3.9.0
 
 # Data validation and serialization
 pydantic>=2.0.0
 
-# Web framework for API
+# Web framework for API (async)
 fastapi>=0.100.0
 
 # ASGI server to run FastAPI
 uvicorn>=0.22.0
 
-# Redis client for refinement session storage
+# Async Redis client for refinement session storage
 redis>=4.5.0
+
+# Accurate token counting (optional but recommended)
+tiktoken>=0.5.0

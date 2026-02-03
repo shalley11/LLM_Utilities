@@ -9,6 +9,7 @@ Endpoints:
 - DELETE /refine/{request_id}: End refinement session
 - GET /health: Health check endpoint
 """
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Path
 from schemas import (
     TextTaskRequest,
@@ -20,23 +21,50 @@ from schemas import (
     RegenerateResponse
 )
 from prompts import get_prompt, get_refinement_prompt, get_regenerate_prompt
-from llm_client import generate_text_with_logging
+from llm_client import generate_text_with_logging, close_session
 from config import (
     DEFAULT_MODEL,
     get_model_context_length,
     estimate_tokens,
-    CONTEXT_REJECT_THRESHOLD
+    CONTEXT_REJECT_THRESHOLD,
+    TIKTOKEN_AVAILABLE
 )
 from logging_config import (
     setup_llm_logging,
     get_llm_logger,
     RequestContext
 )
-from refinement_store import get_refinement_store, RefinementData
+from refinement_store import get_refinement_store, close_refinement_store, RefinementData
 
 # Initialize logging
 setup_llm_logging()
 logger = get_llm_logger()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan handler for startup and shutdown events."""
+    # Startup
+    logger.info("=" * 50)
+    logger.info("TEXT TASK API STARTING")
+    logger.info(f"Default model: {DEFAULT_MODEL}")
+    logger.info(f"Token estimation: {'tiktoken (accurate)' if TIKTOKEN_AVAILABLE else 'char-based (approximate)'}")
+    logger.info("=" * 50)
+
+    # Initialize refinement store
+    try:
+        store = get_refinement_store()
+        logger.info("Refinement store initialized (async)")
+    except Exception as e:
+        logger.warning(f"Refinement store initialization failed: {e}")
+
+    yield
+
+    # Shutdown
+    logger.info("TEXT TASK API SHUTTING DOWN")
+    await close_refinement_store()
+    await close_session()
+
 
 app = FastAPI(
     title="Gemma-3 Text Task API",
@@ -64,32 +92,13 @@ Supports **Summary, Translation, Rephrase, and Deduplication** tasks with iterat
 
 Requests exceeding model context limit (e.g., 8192 tokens for gemma3) are rejected with HTTP 400 to prevent truncation.
 """,
-    version="2.1.0"
+    version="2.3.0",
+    lifespan=lifespan
 )
 
 
-@app.on_event("startup")
-async def startup_event():
-    logger.info("=" * 50)
-    logger.info("TEXT TASK API STARTING")
-    logger.info(f"Default model: {DEFAULT_MODEL}")
-    logger.info("=" * 50)
-
-    # Initialize refinement store
-    try:
-        store = get_refinement_store()
-        logger.info("Refinement store initialized")
-    except Exception as e:
-        logger.warning(f"Refinement store initialization failed: {e}")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    logger.info("TEXT TASK API SHUTTING DOWN")
-
-
 @app.post("/process-text", response_model=TextTaskResponse)
-def process_text(req: TextTaskRequest):
+async def process_text(req: TextTaskRequest):
     """
     Process text with the specified task.
 
@@ -109,9 +118,10 @@ def process_text(req: TextTaskRequest):
     """
     with RequestContext(user_id=req.user_id) as ctx:
         user_info = f" | user_id={req.user_id}" if req.user_id else ""
+        user_name_info = f" | user_name={req.user_name}" if req.user_name else ""
         logger.info(
             f"API_REQUEST | task={req.task} | model={req.model or DEFAULT_MODEL} | "
-            f"text_length={len(req.text)} | summary_type={req.summary_type}{user_info}"
+            f"text_length={len(req.text)} | summary_type={req.summary_type}{user_info}{user_name_info}"
         )
 
         try:
@@ -132,7 +142,7 @@ def process_text(req: TextTaskRequest):
                 logger.warning(
                     f"CONTEXT_EXCEEDED | model={model_name} | "
                     f"estimated_tokens={estimated_tokens} | context_limit={context_limit} | "
-                    f"usage={usage_percent:.1f}%{user_info}"
+                    f"usage={usage_percent:.1f}%{user_info}{user_name_info}"
                 )
                 raise HTTPException(
                     status_code=400,
@@ -146,26 +156,29 @@ def process_text(req: TextTaskRequest):
                     }
                 )
 
-            # Generate with logging (user_id is in context)
-            output = generate_text_with_logging(
+            # Generate with logging (user_id is in context) - async
+            output = await generate_text_with_logging(
                 prompt=prompt,
                 model=req.model,
                 task=req.task
             )
 
-            # Store in refinement store for potential refinement cycle
+            # Store in refinement store for potential refinement cycle - async
             store = get_refinement_store()
-            refinement_data = store.create(
+            refinement_data = await store.create(
                 task=req.task,
                 result=output,
                 original_text=req.text,
                 model=req.model or DEFAULT_MODEL,
-                user_id=req.user_id
+                user_id=req.user_id,
+                user_name=req.user_name,
+                summary_type=req.summary_type,
+                target_language=req.target_language
             )
 
             logger.info(
                 f"API_RESPONSE | task={req.task} | output_length={len(output)} | "
-                f"request_id={refinement_data.request_id} | status=success{user_info}"
+                f"request_id={refinement_data.request_id} | status=success{user_info}{user_name_info}"
             )
 
             return TextTaskResponse(
@@ -173,21 +186,22 @@ def process_text(req: TextTaskRequest):
                 task=req.task,
                 model=req.model or DEFAULT_MODEL,
                 output=output,
-                user_id=req.user_id
+                user_id=req.user_id,
+                user_name=req.user_name
             )
 
         except HTTPException:
             raise
         except Exception as e:
             logger.error(
-                f"API_ERROR | task={req.task} | error={str(e)}{user_info}",
+                f"API_ERROR | task={req.task} | error={str(e)}{user_info}{user_name_info}",
                 exc_info=True
             )
             raise HTTPException(status_code=500, detail="Failed to process text. Please try again.")
 
 
 @app.post("/refine/{request_id}", response_model=RefinementResponse)
-def refine_result(
+async def refine_result(
     request_id: str = Path(..., description="Request ID from process-text response"),
     req: RefinementRequest = ...
 ):
@@ -209,9 +223,9 @@ def refine_result(
     )
 
     try:
-        # Get stored data
+        # Get stored data - async
         store = get_refinement_store()
-        data = store.get(request_id)
+        data = await store.get(request_id)
 
         if not data:
             logger.warning(f"REFINE_NOT_FOUND | request_id={request_id}")
@@ -253,15 +267,15 @@ def refine_result(
 
         # Set user context for logging
         with RequestContext(user_id=req.user_id or data.user_id):
-            # Generate refined result
-            refined_output = generate_text_with_logging(
+            # Generate refined result - async
+            refined_output = await generate_text_with_logging(
                 prompt=prompt,
                 model=data.model,
                 task=f"refine_{data.task}"
             )
 
-            # Update store (overwrites previous result)
-            updated_data = store.update(
+            # Update store (overwrites previous result) - async
+            updated_data = await store.update(
                 request_id=request_id,
                 new_result=refined_output,
                 user_id=req.user_id
@@ -293,7 +307,7 @@ def refine_result(
 
 
 @app.post("/regenerate/{request_id}", response_model=RegenerateResponse)
-def regenerate_result(
+async def regenerate_result(
     request_id: str = Path(..., description="Request ID from process-text response"),
     req: RegenerateRequest = ...
 ):
@@ -317,9 +331,9 @@ def regenerate_result(
     )
 
     try:
-        # Get stored data
+        # Get stored data - async
         store = get_refinement_store()
-        data = store.get(request_id)
+        data = await store.get(request_id)
 
         if not data:
             logger.warning(f"REGENERATE_NOT_FOUND | request_id={request_id}")
@@ -329,11 +343,13 @@ def regenerate_result(
                        f"Please start a new session with /process-text"
             )
 
-        # Build regeneration prompt (uses ORIGINAL TEXT)
+        # Build regeneration prompt (uses ORIGINAL TEXT with task-specific prompt)
         prompt = get_regenerate_prompt(
             original_text=data.original_text,
             user_feedback=req.user_feedback,
-            task=data.task
+            task=data.task,
+            summary_type=data.summary_type,
+            target_language=data.target_language
         )
 
         # Check context length before processing
@@ -361,15 +377,15 @@ def regenerate_result(
 
         # Set user context for logging
         with RequestContext(user_id=req.user_id or data.user_id):
-            # Generate regenerated result
-            regenerated_output = generate_text_with_logging(
+            # Generate regenerated result - async
+            regenerated_output = await generate_text_with_logging(
                 prompt=prompt,
                 model=data.model,
                 task=f"regenerate_{data.task}"
             )
 
-            # Update store with regeneration (overwrites previous result)
-            updated_data = store.update_regeneration(
+            # Update store with regeneration (overwrites previous result) - async
+            updated_data = await store.update_regeneration(
                 request_id=request_id,
                 new_result=regenerated_output,
                 user_id=req.user_id
@@ -401,7 +417,7 @@ def regenerate_result(
 
 
 @app.get("/refine/{request_id}", response_model=RefinementStatusResponse)
-def get_refinement_status(
+async def get_refinement_status(
     request_id: str = Path(..., description="Request ID to check")
 ):
     """
@@ -413,7 +429,7 @@ def get_refinement_status(
 
     try:
         store = get_refinement_store()
-        data = store.get(request_id)
+        data = await store.get(request_id)
 
         if not data:
             raise HTTPException(
@@ -421,7 +437,7 @@ def get_refinement_status(
                 detail=f"Request ID '{request_id}' not found or expired"
             )
 
-        ttl = store.get_ttl(request_id)
+        ttl = await store.get_ttl(request_id)
 
         return RefinementStatusResponse(
             request_id=data.request_id,
@@ -444,7 +460,7 @@ def get_refinement_status(
 
 
 @app.delete("/refine/{request_id}")
-def end_refinement_session(
+async def end_refinement_session(
     request_id: str = Path(..., description="Request ID to delete")
 ):
     """
@@ -458,11 +474,11 @@ def end_refinement_session(
     try:
         store = get_refinement_store()
 
-        # Get data first to log user_id
-        data = store.get(request_id)
+        # Get data first to log user_id - async
+        data = await store.get(request_id)
         user_info = f" | user_id={data.user_id}" if data and data.user_id else ""
 
-        if store.delete(request_id):
+        if await store.delete(request_id):
             logger.info(f"REFINE_DELETED | request_id={request_id}{user_info}")
             return {
                 "status": "deleted",
@@ -483,7 +499,7 @@ def end_refinement_session(
 
 
 @app.post("/refine/{request_id}/extend")
-def extend_refinement_ttl(
+async def extend_refinement_ttl(
     request_id: str = Path(..., description="Request ID to extend"),
     ttl_seconds: int = 3600
 ):
@@ -497,8 +513,8 @@ def extend_refinement_ttl(
     try:
         store = get_refinement_store()
 
-        if store.extend_ttl(request_id, ttl_seconds):
-            new_ttl = store.get_ttl(request_id)
+        if await store.extend_ttl(request_id, ttl_seconds):
+            new_ttl = await store.get_ttl(request_id)
             return {
                 "status": "extended",
                 "request_id": request_id,
@@ -518,13 +534,17 @@ def extend_refinement_ttl(
 
 
 @app.get("/health")
-def health():
+async def health():
     """Health check endpoint."""
-    return {"status": "ok", "model": DEFAULT_MODEL}
+    return {
+        "status": "ok",
+        "model": DEFAULT_MODEL,
+        "token_estimation": "tiktoken" if TIKTOKEN_AVAILABLE else "char_based"
+    }
 
 
 @app.get("/logs/stats")
-def get_log_stats():
+async def get_log_stats():
     """Get logging statistics (for monitoring)."""
     from pathlib import Path
     from logging_config import LOG_DIR

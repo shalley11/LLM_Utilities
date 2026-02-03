@@ -259,53 +259,187 @@ Refined {result_type.title()}:
 def get_regenerate_prompt(
     original_text: str,
     user_feedback: str,
-    task: str
+    task: str,
+    summary_type: str | None = None,
+    target_language: str | None = "English"
 ) -> str:
     """
-    Generate a prompt for regenerating output from original text with new instructions.
+    Generate a prompt for regenerating output from original text based on user feedback.
+    Uses task-specific prompts with user feedback incorporated.
 
     Args:
-        original_text: The original input text
-        user_feedback: User's instructions for regeneration
+        original_text: The original input text to process
+        user_feedback: User's specific instructions for how to regenerate
         task: Original task type (summary, rephrase, etc.)
+        summary_type: Type of summary (brief, detailed, bulletwise) - for summary task
+        target_language: Target language for translation tasks
 
     Returns:
-        Regeneration prompt
+        Regeneration prompt with task-specific instructions and user feedback
     """
-    task_instructions = {
-        "summary": "Generate a summary of the original text",
-        "rephrase": "Rephrase the original text",
-        "translate": "Translate the original text",
-        "remove_repetitions": "Remove repetitions from the original text",
-        "translate_en": "Translate the original text to English",
-        "professional": "Rewrite the original text in a professional tone",
-        "concise": "Make the original text concise",
-        "proofread": "Proofread the original text"
+
+    if task == "summary":
+        summary_type = (summary_type or "brief").lower()
+
+        summary_prompts = {
+            "brief": f"""
+You are a summarization system.
+
+RULES:
+- Use ONLY the information present in the text
+- Do NOT assume, infer, or add anything not stated
+- Preserve factual accuracy
+
+TASK:
+Generate a brief summary that captures the core idea and key outcome.
+Exclude minor or repetitive details.
+
+ADDITIONAL USER INSTRUCTIONS:
+{user_feedback}
+
+TEXT:
+{original_text}
+
+OUTPUT:
+Summary:
+""",
+            "detailed": f"""
+You are a summarization system.
+
+RULES:
+- Use ONLY the information present in the text
+- Do NOT assume, infer, or add anything not stated
+- Preserve important facts, numbers, and conclusions
+
+TASK:
+Generate a detailed summary that:
+- Covers all major points
+- Integrates information logically
+- Maintains a clear and coherent flow
+
+ADDITIONAL USER INSTRUCTIONS:
+{user_feedback}
+
+TEXT:
+{original_text}
+
+OUTPUT:
+Summary:
+""",
+            "bulletwise": f"""
+You are a summarization system.
+
+RULES:
+- Use ONLY the information present in the text
+- Do NOT assume, infer, or add anything not stated
+- Avoid redundancy or overlapping points
+
+TASK:
+Generate a bullet-point summary where:
+- Each bullet represents one key idea or finding
+- Bullets are concise and information-dense
+- Important facts or figures are included when present
+
+ADDITIONAL USER INSTRUCTIONS:
+{user_feedback}
+
+TEXT:
+{original_text}
+
+OUTPUT:
+Bullet Summary:
+"""
+        }
+        return summary_prompts.get(summary_type, summary_prompts["brief"])
+
+    # Task-specific prompts with user feedback
+    prompts = {
+        "translate": f"""
+You are a translation system.
+
+RULES:
+- Use ONLY the information present in the text
+- Do NOT add, omit, or explain content
+- Preserve meaning, tone, and factual accuracy
+
+TASK:
+Translate the text into {target_language}.
+
+ADDITIONAL USER INSTRUCTIONS:
+{user_feedback}
+
+TEXT:
+{original_text}
+
+OUTPUT:
+Translated Text:
+""",
+        "rephrase": f"""
+You are a rewriting system.
+
+RULES:
+- Use ONLY the information present in the text
+- Do NOT change the meaning
+- Do NOT add new information
+
+TASK:
+Rephrase the text to improve clarity and readability while preserving meaning.
+
+ADDITIONAL USER INSTRUCTIONS:
+{user_feedback}
+
+TEXT:
+{original_text}
+
+OUTPUT:
+Rephrased Text:
+""",
+        "remove_repetitions": f"""
+You are a text refinement system.
+
+RULES:
+- Use ONLY the information present in the text
+- Do NOT add or remove meaning
+
+TASK:
+Rewrite the text by removing repetitions and redundancy.
+Keep it natural and fluent.
+
+ADDITIONAL USER INSTRUCTIONS:
+{user_feedback}
+
+TEXT:
+{original_text}
+
+OUTPUT:
+Refined Text:
+"""
     }
 
-    base_instruction = task_instructions.get(task, "Process the original text")
-
-    return f"""
+    if task not in prompts:
+        # Fallback for unknown tasks
+        return f"""
 You are a text processing assistant.
 
 ORIGINAL TEXT:
 {original_text}
 
-USER'S INSTRUCTIONS:
+USER INSTRUCTIONS:
 {user_feedback}
 
 TASK:
-{base_instruction} while following the user's specific instructions above.
+Process the text according to the user's instructions above.
 
 RULES:
 - Use ONLY information from the original text
-- Apply the user's instructions carefully
-- Do NOT add information not present in the original
-- Maintain accuracy and coherence
+- Follow the user's instructions precisely
+- Do NOT add information not present in the original text
 
 OUTPUT:
 Result:
 """
+
+    return prompts[task]
 
 
 def get_proofreading_prompt(text: str, focus: str = "general") -> str:
