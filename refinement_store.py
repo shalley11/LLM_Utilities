@@ -1,5 +1,5 @@
 """
-Refinement Store - Redis-based storage for refinement cycle.
+Refinement Store - Async Redis-based storage for refinement cycle.
 
 Simple approach:
 - First request: Generate result, create request_id, store in Redis
@@ -8,7 +8,7 @@ Simple approach:
 """
 import json
 import uuid
-import redis
+import redis.asyncio as redis
 from datetime import datetime
 from typing import Optional, Dict, Any
 from dataclasses import dataclass, asdict
@@ -62,7 +62,7 @@ class RefinementData:
 
 class RefinementStore:
     """
-    Redis-based store for refinement sessions.
+    Async Redis-based store for refinement sessions.
 
     Stores only the latest result - overwrites on each refinement.
     """
@@ -74,10 +74,30 @@ class RefinementStore:
         db: int = REDIS_DB,
         ttl: int = REFINEMENT_TTL
     ):
-        self._redis = redis.Redis(host=host, port=port, db=db, decode_responses=True)
+        self._redis: Optional[redis.Redis] = None
+        self._host = host
+        self._port = port
+        self._db = db
         self._ttl = ttl
         self._prefix = REFINEMENT_KEY_PREFIX
-        logger.info(f"[REFINE_STORE] Initialized | host={host}:{port} | db={db} | ttl={ttl}s")
+
+    async def _get_redis(self) -> redis.Redis:
+        """Get or create async Redis connection."""
+        if self._redis is None:
+            self._redis = redis.Redis(
+                host=self._host,
+                port=self._port,
+                db=self._db,
+                decode_responses=True
+            )
+            logger.info(f"[REFINE_STORE] Initialized | host={self._host}:{self._port} | db={self._db} | ttl={self._ttl}s")
+        return self._redis
+
+    async def close(self):
+        """Close Redis connection."""
+        if self._redis:
+            await self._redis.close()
+            self._redis = None
 
     def _key(self, request_id: str) -> str:
         """Generate Redis key for a request."""
@@ -87,7 +107,7 @@ class RefinementStore:
         """Generate a unique request ID."""
         return str(uuid.uuid4())
 
-    def create(
+    async def create(
         self,
         task: str,
         result: str,
@@ -129,15 +149,16 @@ class RefinementStore:
             refinement_count=0
         )
 
+        r = await self._get_redis()
         key = self._key(request_id)
-        self._redis.setex(key, self._ttl, data.to_json())
+        await r.setex(key, self._ttl, data.to_json())
 
         user_info = f" | user_id={user_id}" if user_id else ""
         logger.info(f"[REFINE_STORE] Created | request_id={request_id} | task={task}{user_info}")
 
         return data
 
-    def get(self, request_id: str) -> Optional[RefinementData]:
+    async def get(self, request_id: str) -> Optional[RefinementData]:
         """
         Get refinement data by request_id.
 
@@ -147,8 +168,9 @@ class RefinementStore:
         Returns:
             RefinementData or None if not found/expired
         """
+        r = await self._get_redis()
         key = self._key(request_id)
-        json_str = self._redis.get(key)
+        json_str = await r.get(key)
 
         if json_str:
             data = RefinementData.from_json(json_str)
@@ -158,7 +180,7 @@ class RefinementStore:
         logger.debug(f"[REFINE_STORE] Not found | request_id={request_id}")
         return None
 
-    def update(
+    async def update(
         self,
         request_id: str,
         new_result: str,
@@ -175,7 +197,7 @@ class RefinementStore:
         Returns:
             Updated RefinementData or None if not found
         """
-        data = self.get(request_id)
+        data = await self.get(request_id)
         if not data:
             return None
 
@@ -189,12 +211,13 @@ class RefinementStore:
             data.user_id = user_id
 
         # Get remaining TTL and preserve it
+        r = await self._get_redis()
         key = self._key(request_id)
-        ttl = self._redis.ttl(key)
+        ttl = await r.ttl(key)
         if ttl > 0:
-            self._redis.setex(key, ttl, data.to_json())
+            await r.setex(key, ttl, data.to_json())
         else:
-            self._redis.setex(key, self._ttl, data.to_json())
+            await r.setex(key, self._ttl, data.to_json())
 
         user_info = f" | user_id={data.user_id}" if data.user_id else ""
         logger.info(
@@ -204,7 +227,7 @@ class RefinementStore:
 
         return data
 
-    def update_regeneration(
+    async def update_regeneration(
         self,
         request_id: str,
         new_result: str,
@@ -221,7 +244,7 @@ class RefinementStore:
         Returns:
             Updated RefinementData or None if not found
         """
-        data = self.get(request_id)
+        data = await self.get(request_id)
         if not data:
             return None
 
@@ -235,12 +258,13 @@ class RefinementStore:
             data.user_id = user_id
 
         # Get remaining TTL and preserve it
+        r = await self._get_redis()
         key = self._key(request_id)
-        ttl = self._redis.ttl(key)
+        ttl = await r.ttl(key)
         if ttl > 0:
-            self._redis.setex(key, ttl, data.to_json())
+            await r.setex(key, ttl, data.to_json())
         else:
-            self._redis.setex(key, self._ttl, data.to_json())
+            await r.setex(key, self._ttl, data.to_json())
 
         user_info = f" | user_id={data.user_id}" if data.user_id else ""
         logger.info(
@@ -250,7 +274,7 @@ class RefinementStore:
 
         return data
 
-    def delete(self, request_id: str) -> bool:
+    async def delete(self, request_id: str) -> bool:
         """
         Delete a refinement session.
 
@@ -260,8 +284,9 @@ class RefinementStore:
         Returns:
             True if deleted, False if not found
         """
+        r = await self._get_redis()
         key = self._key(request_id)
-        result = self._redis.delete(key)
+        result = await r.delete(key)
 
         if result:
             logger.info(f"[REFINE_STORE] Deleted | request_id={request_id}")
@@ -270,7 +295,7 @@ class RefinementStore:
         logger.debug(f"[REFINE_STORE] Delete failed (not found) | request_id={request_id}")
         return False
 
-    def extend_ttl(self, request_id: str, ttl: Optional[int] = None) -> bool:
+    async def extend_ttl(self, request_id: str, ttl: Optional[int] = None) -> bool:
         """
         Extend the TTL for a refinement session.
 
@@ -281,25 +306,28 @@ class RefinementStore:
         Returns:
             True if extended, False if not found
         """
+        r = await self._get_redis()
         key = self._key(request_id)
         ttl = ttl or self._ttl
 
-        if self._redis.exists(key):
-            self._redis.expire(key, ttl)
+        if await r.exists(key):
+            await r.expire(key, ttl)
             logger.debug(f"[REFINE_STORE] Extended TTL | request_id={request_id} | ttl={ttl}s")
             return True
 
         return False
 
-    def get_ttl(self, request_id: str) -> int:
+    async def get_ttl(self, request_id: str) -> int:
         """Get remaining TTL for a request."""
+        r = await self._get_redis()
         key = self._key(request_id)
-        return self._redis.ttl(key)
+        return await r.ttl(key)
 
-    def exists(self, request_id: str) -> bool:
+    async def exists(self, request_id: str) -> bool:
         """Check if a request exists."""
+        r = await self._get_redis()
         key = self._key(request_id)
-        return self._redis.exists(key) > 0
+        return await r.exists(key) > 0
 
 
 # Global store instance
@@ -312,6 +340,14 @@ def get_refinement_store() -> RefinementStore:
     if _store is None:
         _store = RefinementStore()
     return _store
+
+
+async def close_refinement_store():
+    """Close the global refinement store connection."""
+    global _store
+    if _store:
+        await _store.close()
+        _store = None
 
 
 def init_refinement_store(

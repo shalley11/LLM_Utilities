@@ -1,7 +1,17 @@
 import os
+from functools import lru_cache
+
+# Try to import tiktoken for accurate token estimation
+try:
+    import tiktoken
+    _encoder = tiktoken.get_encoding("cl100k_base")  # GPT-4/Claude compatible
+    TIKTOKEN_AVAILABLE = True
+except ImportError:
+    TIKTOKEN_AVAILABLE = False
+    _encoder = None
 
 #LLM_BACKEND = os.getenv("LLM_BACKEND", "ollama")
-LLM_BACKEND="ollama"
+LLM_BACKEND = "ollama"
 # ollama | vllm
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
@@ -29,17 +39,46 @@ CONTEXT_REJECT_THRESHOLD = 100  # Reject requests exceeding this percentage
 # Redis Configuration
 # =========================
 
-REDIS_HOST = "localhost"
-REDIS_PORT = 6379
-REDIS_DB = 0
-REFINEMENT_TTL = 7200  # 2 hours TTL for session expiry
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_DB = int(os.getenv("REDIS_DB", "0"))
+REFINEMENT_TTL = int(os.getenv("REFINEMENT_TTL", "7200"))  # 2 hours TTL for session expiry
 
 
+@lru_cache(maxsize=32)
 def get_model_context_length(model: str) -> int:
-    """Get context length for a model."""
+    """Get context length for a model (cached)."""
     return MODEL_CONTEXT_LENGTHS.get(model, DEFAULT_CONTEXT_LENGTH)
 
 
 def estimate_tokens(text: str) -> int:
-    """Estimate token count (~4 chars per token)."""
+    """
+    Estimate token count using tiktoken if available, otherwise fallback to char-based estimation.
+
+    tiktoken provides accurate token counts compatible with modern LLMs.
+    Fallback uses ~4 chars per token approximation.
+    """
+    if TIKTOKEN_AVAILABLE and _encoder is not None:
+        return len(_encoder.encode(text))
+    # Fallback: ~4 chars per token (less accurate)
     return len(text) // 4
+
+
+def estimate_tokens_with_info(text: str) -> dict:
+    """
+    Estimate tokens and return additional info about the estimation method.
+
+    Returns:
+        dict with 'tokens', 'method', and 'accurate' keys
+    """
+    if TIKTOKEN_AVAILABLE and _encoder is not None:
+        return {
+            "tokens": len(_encoder.encode(text)),
+            "method": "tiktoken",
+            "accurate": True
+        }
+    return {
+        "tokens": len(text) // 4,
+        "method": "char_estimate",
+        "accurate": False
+    }
