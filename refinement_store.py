@@ -31,6 +31,7 @@ class RefinementData:
     original_text: str             # Original input text
     model: str
     user_id: Optional[str] = None
+    user_name: Optional[str] = None  # User name for logging/display
     summary_type: Optional[str] = None  # For summary task: brief, detailed, bulletwise
     target_language: Optional[str] = None  # For translate task
     refinement_count: int = 0      # Count of refinements (without original text)
@@ -93,6 +94,7 @@ class RefinementStore:
         original_text: str,
         model: str,
         user_id: Optional[str] = None,
+        user_name: Optional[str] = None,
         summary_type: Optional[str] = None,
         target_language: Optional[str] = None
     ) -> RefinementData:
@@ -105,6 +107,7 @@ class RefinementStore:
             original_text: Original input text
             model: Model used
             user_id: Optional user identifier
+            user_name: Optional user name for logging
             summary_type: Type of summary (brief, detailed, bulletwise)
             target_language: Target language for translation
 
@@ -120,6 +123,7 @@ class RefinementStore:
             original_text=original_text,
             model=model,
             user_id=user_id,
+            user_name=user_name,
             summary_type=summary_type,
             target_language=target_language,
             refinement_count=0

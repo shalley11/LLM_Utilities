@@ -115,9 +115,10 @@ async def process_text(req: TextTaskRequest):
     """
     with RequestContext(user_id=req.user_id) as ctx:
         user_info = f" | user_id={req.user_id}" if req.user_id else ""
+        user_name_info = f" | user_name={req.user_name}" if req.user_name else ""
         logger.info(
             f"API_REQUEST | task={req.task} | model={req.model or DEFAULT_MODEL} | "
-            f"text_length={len(req.text)} | summary_type={req.summary_type}{user_info}"
+            f"text_length={len(req.text)} | summary_type={req.summary_type}{user_info}{user_name_info}"
         )
 
         try:
@@ -138,7 +139,7 @@ async def process_text(req: TextTaskRequest):
                 logger.warning(
                     f"CONTEXT_EXCEEDED | model={model_name} | "
                     f"estimated_tokens={estimated_tokens} | context_limit={context_limit} | "
-                    f"usage={usage_percent:.1f}%{user_info}"
+                    f"usage={usage_percent:.1f}%{user_info}{user_name_info}"
                 )
                 raise HTTPException(
                     status_code=400,
@@ -167,13 +168,14 @@ async def process_text(req: TextTaskRequest):
                 original_text=req.text,
                 model=req.model or DEFAULT_MODEL,
                 user_id=req.user_id,
+                user_name=req.user_name,
                 summary_type=req.summary_type,
                 target_language=req.target_language
             )
 
             logger.info(
                 f"API_RESPONSE | task={req.task} | output_length={len(output)} | "
-                f"request_id={refinement_data.request_id} | status=success{user_info}"
+                f"request_id={refinement_data.request_id} | status=success{user_info}{user_name_info}"
             )
 
             return TextTaskResponse(
@@ -181,14 +183,15 @@ async def process_text(req: TextTaskRequest):
                 task=req.task,
                 model=req.model or DEFAULT_MODEL,
                 output=output,
-                user_id=req.user_id
+                user_id=req.user_id,
+                user_name=req.user_name
             )
 
         except HTTPException:
             raise
         except Exception as e:
             logger.error(
-                f"API_ERROR | task={req.task} | error={str(e)}{user_info}",
+                f"API_ERROR | task={req.task} | error={str(e)}{user_info}{user_name_info}",
                 exc_info=True
             )
             raise HTTPException(status_code=500, detail="Failed to process text. Please try again.")

@@ -30,6 +30,10 @@ class TextTaskRequest(BaseModel):
         None,
         description="Optional user identifier for tracking and logging purposes"
     )
+    user_name: Optional[str] = Field(
+        None,
+        description="Optional user name for logging and display purposes"
+    )
 
 
 class TextTaskResponse(BaseModel):
@@ -39,6 +43,7 @@ class TextTaskResponse(BaseModel):
     model: str
     output: str
     user_id: Optional[str] = None
+    user_name: Optional[str] = None
 
 
 # =========================
