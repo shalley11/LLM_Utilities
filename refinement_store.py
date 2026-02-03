@@ -31,6 +31,8 @@ class RefinementData:
     original_text: str             # Original input text
     model: str
     user_id: Optional[str] = None
+    summary_type: Optional[str] = None  # For summary task: brief, detailed, bulletwise
+    target_language: Optional[str] = None  # For translate task
     refinement_count: int = 0      # Count of refinements (without original text)
     regeneration_count: int = 0    # Count of regenerations (with original text)
     created_at: str = None
@@ -90,7 +92,9 @@ class RefinementStore:
         result: str,
         original_text: str,
         model: str,
-        user_id: Optional[str] = None
+        user_id: Optional[str] = None,
+        summary_type: Optional[str] = None,
+        target_language: Optional[str] = None
     ) -> RefinementData:
         """
         Create a new refinement session.
@@ -101,6 +105,8 @@ class RefinementStore:
             original_text: Original input text
             model: Model used
             user_id: Optional user identifier
+            summary_type: Type of summary (brief, detailed, bulletwise)
+            target_language: Target language for translation
 
         Returns:
             RefinementData with generated request_id
@@ -114,6 +120,8 @@ class RefinementStore:
             original_text=original_text,
             model=model,
             user_id=user_id,
+            summary_type=summary_type,
+            target_language=target_language,
             refinement_count=0
         )
 

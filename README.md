@@ -1,13 +1,15 @@
 # LLM_Utilities
 
-A production-ready Python module for LLM interactions with comprehensive logging, context tracking, and iterative refinement support.
+A production-ready async Python module for LLM interactions with comprehensive logging, context tracking, and iterative refinement support.
 
 ## Features
 
+- **Async I/O**: Non-blocking LLM calls using `aiohttp` for high concurrency
+- **Connection Pooling**: Shared HTTP session for optimal performance
 - **Multi-Backend Support**: Ollama and VLLM backends
 - **Context Length Tracking**: Model-wise context limits with warnings and rejection
 - **Refinement Cycle**: Iteratively improve outputs with user feedback
-- **Regeneration**: Start fresh from original text with new instructions
+- **Regeneration**: Start fresh from original text with task-specific prompts
 - **Comprehensive Logging**: Structured logs with request tracing and metrics
 - **Redis Session Storage**: Persistent refinement sessions with TTL
 
@@ -20,9 +22,9 @@ pip install -r requirements.txt
 ```
 
 ### Dependencies
-- `requests` - HTTP client for LLM API calls
+- `aiohttp` - Async HTTP client for LLM API calls
 - `pydantic` - Data validation
-- `fastapi` - Web framework
+- `fastapi` - Async web framework
 - `uvicorn` - ASGI server
 - `redis` - Session storage
 
@@ -88,6 +90,7 @@ Process text with various tasks. Returns a `request_id` for refinement/regenerat
   "text": "Your long document here...",
   "task": "summary",
   "summary_type": "brief",
+  "target_language": "Spanish",
   "model": "gemma3:4b",
   "user_id": "user123"
 }
@@ -96,6 +99,8 @@ Process text with various tasks. Returns a `request_id` for refinement/regenerat
 **Tasks:** `summary`, `translate`, `rephrase`, `remove_repetitions`
 
 **Summary Types:** `brief`, `detailed`, `bulletwise`
+
+**Target Language:** Any language string (for `translate` task)
 
 **Response:**
 ```json
@@ -136,7 +141,7 @@ Refine the **current result** based on user feedback. Uses smaller context.
 ---
 
 ### POST `/regenerate/{request_id}`
-Regenerate from **original text** with new instructions. Uses larger context but starts fresh.
+Regenerate from **original text** using task-specific prompts with user feedback. Uses the full task prompt (summary, rephrase, etc.) combined with user instructions.
 
 **Request:**
 ```json
@@ -157,6 +162,8 @@ Regenerate from **original text** with new instructions. Uses larger context but
   "user_id": "user123"
 }
 ```
+
+**Note:** Regenerate uses the original task-specific prompt (e.g., full summary prompt with rules) plus the user's feedback as "ADDITIONAL USER INSTRUCTIONS".
 
 ---
 
@@ -208,6 +215,7 @@ Get log file statistics.
 | Aspect | `/refine` | `/regenerate` |
 |--------|-----------|---------------|
 | **Input** | `current_result` | `original_text` |
+| **Prompt** | Generic refinement prompt | Task-specific prompt (summary/rephrase/etc.) |
 | **Context Size** | Smaller | Larger |
 | **Use Case** | Polish, tweak, minor fixes | Start fresh, change direction |
 | **Counter** | `refinement_count` | `regeneration_count` |
@@ -220,6 +228,58 @@ Get log file statistics.
 - Output went in wrong direction
 - Need completely different focus
 - "Focus on X instead of Y", "Ignore section Z"
+- Want to apply different summarization style
+
+---
+
+## Regenerate Prompt Structure
+
+Regenerate uses the **full task-specific prompt** with user feedback incorporated:
+
+### Example: Summary Task
+```
+You are a summarization system.
+
+RULES:
+- Use ONLY the information present in the text
+- Do NOT assume, infer, or add anything not stated
+- Preserve factual accuracy
+
+TASK:
+Generate a brief summary that captures the core idea and key outcome.
+Exclude minor or repetitive details.
+
+ADDITIONAL USER INSTRUCTIONS:
+{user_feedback}
+
+TEXT:
+{original_text}
+
+OUTPUT:
+Summary:
+```
+
+### Example: Translate Task
+```
+You are a translation system.
+
+RULES:
+- Use ONLY the information present in the text
+- Do NOT add, omit, or explain content
+- Preserve meaning, tone, and factual accuracy
+
+TASK:
+Translate the text into {target_language}.
+
+ADDITIONAL USER INSTRUCTIONS:
+{user_feedback}
+
+TEXT:
+{original_text}
+
+OUTPUT:
+Translated Text:
+```
 
 ---
 
@@ -254,39 +314,39 @@ The API validates context length before processing:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        FastAPI Server                           │
-│                         (main.py)                               │
+│                    FastAPI Server (Async)                        │
+│                         (main.py)                                │
 ├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────────────┐ │
-│  │ /process-   │    │  /refine    │    │    /regenerate      │ │
-│  │    text     │    │             │    │                     │ │
-│  └──────┬──────┘    └──────┬──────┘    └──────────┬──────────┘ │
-│         │                  │                      │             │
-│         ▼                  ▼                      ▼             │
-│  ┌─────────────────────────────────────────────────────────────┐│
-│  │                   Context Validation                        ││
-│  │              (config.py - estimate_tokens)                  ││
-│  └─────────────────────────────────────────────────────────────┘│
-│         │                  │                      │             │
-│         ▼                  ▼                      ▼             │
-│  ┌─────────────────────────────────────────────────────────────┐│
-│  │                    Prompt Builder                           ││
-│  │                     (prompts.py)                            ││
-│  └─────────────────────────────────────────────────────────────┘│
-│         │                  │                      │             │
-│         ▼                  ▼                      ▼             │
-│  ┌─────────────────────────────────────────────────────────────┐│
-│  │                     LLM Client                              ││
-│  │    (llm_client.py - Ollama/VLLM with context logging)      ││
-│  └─────────────────────────────────────────────────────────────┘│
-│         │                  │                      │             │
-│         ▼                  ▼                      ▼             │
-│  ┌─────────────────────────────────────────────────────────────┐│
-│  │                  Refinement Store                           ││
-│  │           (refinement_store.py - Redis)                     ││
-│  └─────────────────────────────────────────────────────────────┘│
-│                                                                 │
+│                                                                  │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────────────┐  │
+│  │ /process-   │    │  /refine    │    │    /regenerate      │  │
+│  │    text     │    │             │    │                     │  │
+│  └──────┬──────┘    └──────┬──────┘    └──────────┬──────────┘  │
+│         │                  │                      │              │
+│         ▼                  ▼                      ▼              │
+│  ┌─────────────────────────────────────────────────────────────┐ │
+│  │                   Context Validation                         │ │
+│  │              (config.py - estimate_tokens)                   │ │
+│  └─────────────────────────────────────────────────────────────┘ │
+│         │                  │                      │              │
+│         ▼                  ▼                      ▼              │
+│  ┌─────────────────────────────────────────────────────────────┐ │
+│  │                    Prompt Builder                            │ │
+│  │    (prompts.py - task-specific + user feedback)             │ │
+│  └─────────────────────────────────────────────────────────────┘ │
+│         │                  │                      │              │
+│         ▼                  ▼                      ▼              │
+│  ┌─────────────────────────────────────────────────────────────┐ │
+│  │              Async LLM Client (aiohttp)                      │ │
+│  │    (llm_client.py - connection pooling, non-blocking)       │ │
+│  └─────────────────────────────────────────────────────────────┘ │
+│         │                  │                      │              │
+│         ▼                  ▼                      ▼              │
+│  ┌─────────────────────────────────────────────────────────────┐ │
+│  │                  Refinement Store                            │ │
+│  │   (refinement_store.py - Redis with summary_type tracking)  │ │
+│  └─────────────────────────────────────────────────────────────┘ │
+│                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -309,13 +369,13 @@ POST /process-text
      │        │
      │        └─► < 100%? ──► Continue
      │
-     ├─► Call LLM (llm_client.py)
+     ├─► Call LLM (async, non-blocking)
      │        │
      │        └─► Log context usage, metrics
      │
-     ├─► Store in Redis (refinement_store.py)
+     ├─► Store in Redis (with summary_type, target_language)
      │        │
-     │        └─► TTL: 1 hour
+     │        └─► TTL: 2 hours
      │
      └─► Return response with request_id
 ```
@@ -332,7 +392,7 @@ POST /refine/{request_id}
      │
      ├─► Check Context Length
      │
-     ├─► Call LLM
+     ├─► Call LLM (async)
      │
      ├─► Update Redis (overwrite current_result)
      │        │
@@ -345,15 +405,15 @@ POST /refine/{request_id}
 ```
 POST /regenerate/{request_id}
      │
-     ├─► Fetch from Redis (original_text)
+     ├─► Fetch from Redis (original_text, summary_type, target_language)
      │
-     ├─► Build Regeneration Prompt
+     ├─► Build Task-Specific Regeneration Prompt
      │        │
-     │        └─► original_text + user_feedback
+     │        └─► Full task prompt + user_feedback + original_text
      │
      ├─► Check Context Length
      │
-     ├─► Call LLM
+     ├─► Call LLM (async)
      │
      ├─► Update Redis (overwrite current_result)
      │        │
@@ -399,13 +459,15 @@ CRITICAL | CONTEXT_EXCEEDED | model=gemma3:4b | usage=105.3% | tokens=8626/8192
 
 ---
 
-## Python SDK Usage
+## Python SDK Usage (Async)
 
 ```python
+import asyncio
 from LLM_Utilities import (
     generate_text,
     generate_text_with_logging,
     stream_text,
+    close_session,
     setup_llm_logging,
     get_model_context_length,
     estimate_tokens
@@ -414,31 +476,38 @@ from LLM_Utilities import (
 # Initialize logging
 setup_llm_logging()
 
-# Simple generation
-result = generate_text("Summarize this text...")
+async def main():
+    # Simple generation
+    result = await generate_text("Summarize this text...")
 
-# Generation with logging
-result = generate_text_with_logging(
-    prompt="Summarize this text...",
-    model="gemma3:4b",
-    task="summary"
-)
+    # Generation with logging
+    result = await generate_text_with_logging(
+        prompt="Summarize this text...",
+        model="gemma3:4b",
+        task="summary"
+    )
 
-# Streaming
-for token in stream_text("Summarize this text..."):
-    print(token, end='', flush=True)
+    # Streaming (async generator)
+    async for token in stream_text("Summarize this text..."):
+        print(token, end='', flush=True)
 
-# Check context before calling
-prompt = "Your long prompt..."
-model = "gemma3:4b"
-context_limit = get_model_context_length(model)
-tokens = estimate_tokens(prompt)
-usage = (tokens / context_limit) * 100
+    # Check context before calling
+    prompt = "Your long prompt..."
+    model = "gemma3:4b"
+    context_limit = get_model_context_length(model)
+    tokens = estimate_tokens(prompt)
+    usage = (tokens / context_limit) * 100
 
-if usage < 100:
-    result = generate_text(prompt)
-else:
-    print(f"Prompt too long: {usage:.1f}% of context")
+    if usage < 100:
+        result = await generate_text(prompt)
+    else:
+        print(f"Prompt too long: {usage:.1f}% of context")
+
+    # Cleanup on shutdown
+    await close_session()
+
+# Run
+asyncio.run(main())
 ```
 
 ---
@@ -447,14 +516,14 @@ else:
 
 ```
 LLM_Utilities/
-├── __init__.py           # Package exports
+├── __init__.py           # Package exports (async functions)
 ├── config.py             # Configuration & context limits
-├── llm_client.py         # LLM backend integration
+├── llm_client.py         # Async LLM backend integration (aiohttp)
 ├── logging_config.py     # Structured logging system
-├── prompts.py            # Prompt templates
-├── refinement_store.py   # Redis session storage
+├── prompts.py            # Task-specific prompt templates
+├── refinement_store.py   # Redis session storage (with summary_type)
 ├── schemas.py            # Pydantic models
-├── main.py               # FastAPI application
+├── main.py               # FastAPI application (async endpoints)
 ├── requirements.txt      # Dependencies
 ├── README.md             # This documentation
 └── logs/                 # Log files (auto-created)
@@ -497,12 +566,52 @@ MODEL_CONTEXT_LENGTHS = {
 - **Extend**: `POST /refine/{id}/extend?ttl_seconds=3600`
 - **Cleanup**: `DELETE /refine/{id}` or auto-expire
 
+### Stored Session Data
+```python
+{
+    "request_id": "uuid",
+    "task": "summary",
+    "current_result": "Latest output...",
+    "original_text": "Original input...",
+    "model": "gemma3:4b",
+    "user_id": "user123",
+    "summary_type": "brief",        # For summary task
+    "target_language": "Spanish",   # For translate task
+    "refinement_count": 2,
+    "regeneration_count": 1,
+    "created_at": "2024-01-15T10:30:00",
+    "updated_at": "2024-01-15T10:35:00"
+}
+```
+
+---
+
+## Performance Benefits (Async)
+
+| Aspect | Sync (Before) | Async (Now) |
+|--------|---------------|-------------|
+| HTTP Client | `requests` (blocking) | `aiohttp` (non-blocking) |
+| Concurrent Requests | Thread-limited | Event loop (thousands) |
+| Connection Reuse | None | Connection pooling |
+| Memory per Request | Higher (threads) | Lower (coroutines) |
+
+### Connection Pool Settings
+```python
+# In llm_client.py
+connector = aiohttp.TCPConnector(
+    limit=100,           # Total connections
+    limit_per_host=20    # Per-host limit
+)
+timeout = aiohttp.ClientTimeout(total=300)  # 5 minutes
+```
+
 ---
 
 ## Version History
 
 | Version | Changes |
 |---------|---------|
+| 2.2.0 | Async I/O with aiohttp, connection pooling, task-specific regenerate prompts |
 | 2.1.0 | Added `/regenerate` endpoint, context length protection |
 | 2.0.0 | Added refinement cycle with Redis storage |
 | 1.0.0 | Initial release with basic LLM integration |

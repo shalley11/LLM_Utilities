@@ -1,10 +1,11 @@
 """
-LLM Utilities Package
+LLM Utilities Package (Async)
 
 Provides:
-- LLM client with Ollama/VLLM backend support
+- Async LLM client with Ollama/VLLM backend support
+- Connection pooling via aiohttp for optimal performance
 - Comprehensive logging for all LLM calls
-- Streaming support
+- Async streaming support (AsyncGenerator)
 - Request tracing
 - Refinement cycle with Redis storage
 """
@@ -37,7 +38,9 @@ from .llm_client import (
     generate_text_with_logging,
     stream_text,
     stream_ollama,
-    stream_vllm
+    stream_vllm,
+    get_session,
+    close_session
 )
 from .logging_config import (
     setup_llm_logging,
@@ -75,12 +78,14 @@ __all__ = [
     "REFINEMENT_TTL",
     "get_model_context_length",
     "estimate_tokens",
-    # LLM Client
+    # LLM Client (all async)
     "generate_text",
     "generate_text_with_logging",
     "stream_text",
     "stream_ollama",
     "stream_vllm",
+    "get_session",
+    "close_session",
     # Logging
     "setup_llm_logging",
     "get_llm_logger",

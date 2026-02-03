@@ -9,6 +9,7 @@ Endpoints:
 - DELETE /refine/{request_id}: End refinement session
 - GET /health: Health check endpoint
 """
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Path
 from schemas import (
     TextTaskRequest,
@@ -20,7 +21,7 @@ from schemas import (
     RegenerateResponse
 )
 from prompts import get_prompt, get_refinement_prompt, get_regenerate_prompt
-from llm_client import generate_text_with_logging
+from llm_client import generate_text_with_logging, close_session
 from config import (
     DEFAULT_MODEL,
     get_model_context_length,
@@ -37,6 +38,30 @@ from refinement_store import get_refinement_store, RefinementData
 # Initialize logging
 setup_llm_logging()
 logger = get_llm_logger()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan handler for startup and shutdown events."""
+    # Startup
+    logger.info("=" * 50)
+    logger.info("TEXT TASK API STARTING")
+    logger.info(f"Default model: {DEFAULT_MODEL}")
+    logger.info("=" * 50)
+
+    # Initialize refinement store
+    try:
+        store = get_refinement_store()
+        logger.info("Refinement store initialized")
+    except Exception as e:
+        logger.warning(f"Refinement store initialization failed: {e}")
+
+    yield
+
+    # Shutdown
+    logger.info("TEXT TASK API SHUTTING DOWN")
+    await close_session()
+
 
 app = FastAPI(
     title="Gemma-3 Text Task API",
@@ -64,32 +89,13 @@ Supports **Summary, Translation, Rephrase, and Deduplication** tasks with iterat
 
 Requests exceeding model context limit (e.g., 8192 tokens for gemma3) are rejected with HTTP 400 to prevent truncation.
 """,
-    version="2.1.0"
+    version="2.2.0",
+    lifespan=lifespan
 )
 
 
-@app.on_event("startup")
-async def startup_event():
-    logger.info("=" * 50)
-    logger.info("TEXT TASK API STARTING")
-    logger.info(f"Default model: {DEFAULT_MODEL}")
-    logger.info("=" * 50)
-
-    # Initialize refinement store
-    try:
-        store = get_refinement_store()
-        logger.info("Refinement store initialized")
-    except Exception as e:
-        logger.warning(f"Refinement store initialization failed: {e}")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    logger.info("TEXT TASK API SHUTTING DOWN")
-
-
 @app.post("/process-text", response_model=TextTaskResponse)
-def process_text(req: TextTaskRequest):
+async def process_text(req: TextTaskRequest):
     """
     Process text with the specified task.
 
@@ -146,8 +152,8 @@ def process_text(req: TextTaskRequest):
                     }
                 )
 
-            # Generate with logging (user_id is in context)
-            output = generate_text_with_logging(
+            # Generate with logging (user_id is in context) - now async
+            output = await generate_text_with_logging(
                 prompt=prompt,
                 model=req.model,
                 task=req.task
@@ -160,7 +166,9 @@ def process_text(req: TextTaskRequest):
                 result=output,
                 original_text=req.text,
                 model=req.model or DEFAULT_MODEL,
-                user_id=req.user_id
+                user_id=req.user_id,
+                summary_type=req.summary_type,
+                target_language=req.target_language
             )
 
             logger.info(
@@ -187,7 +195,7 @@ def process_text(req: TextTaskRequest):
 
 
 @app.post("/refine/{request_id}", response_model=RefinementResponse)
-def refine_result(
+async def refine_result(
     request_id: str = Path(..., description="Request ID from process-text response"),
     req: RefinementRequest = ...
 ):
@@ -253,8 +261,8 @@ def refine_result(
 
         # Set user context for logging
         with RequestContext(user_id=req.user_id or data.user_id):
-            # Generate refined result
-            refined_output = generate_text_with_logging(
+            # Generate refined result - now async
+            refined_output = await generate_text_with_logging(
                 prompt=prompt,
                 model=data.model,
                 task=f"refine_{data.task}"
@@ -293,7 +301,7 @@ def refine_result(
 
 
 @app.post("/regenerate/{request_id}", response_model=RegenerateResponse)
-def regenerate_result(
+async def regenerate_result(
     request_id: str = Path(..., description="Request ID from process-text response"),
     req: RegenerateRequest = ...
 ):
@@ -329,11 +337,13 @@ def regenerate_result(
                        f"Please start a new session with /process-text"
             )
 
-        # Build regeneration prompt (uses ORIGINAL TEXT)
+        # Build regeneration prompt (uses ORIGINAL TEXT with task-specific prompt)
         prompt = get_regenerate_prompt(
             original_text=data.original_text,
             user_feedback=req.user_feedback,
-            task=data.task
+            task=data.task,
+            summary_type=data.summary_type,
+            target_language=data.target_language
         )
 
         # Check context length before processing
@@ -361,8 +371,8 @@ def regenerate_result(
 
         # Set user context for logging
         with RequestContext(user_id=req.user_id or data.user_id):
-            # Generate regenerated result
-            regenerated_output = generate_text_with_logging(
+            # Generate regenerated result - now async
+            regenerated_output = await generate_text_with_logging(
                 prompt=prompt,
                 model=data.model,
                 task=f"regenerate_{data.task}"
@@ -401,7 +411,7 @@ def regenerate_result(
 
 
 @app.get("/refine/{request_id}", response_model=RefinementStatusResponse)
-def get_refinement_status(
+async def get_refinement_status(
     request_id: str = Path(..., description="Request ID to check")
 ):
     """
@@ -444,7 +454,7 @@ def get_refinement_status(
 
 
 @app.delete("/refine/{request_id}")
-def end_refinement_session(
+async def end_refinement_session(
     request_id: str = Path(..., description="Request ID to delete")
 ):
     """
@@ -483,7 +493,7 @@ def end_refinement_session(
 
 
 @app.post("/refine/{request_id}/extend")
-def extend_refinement_ttl(
+async def extend_refinement_ttl(
     request_id: str = Path(..., description="Request ID to extend"),
     ttl_seconds: int = 3600
 ):
@@ -518,13 +528,13 @@ def extend_refinement_ttl(
 
 
 @app.get("/health")
-def health():
+async def health():
     """Health check endpoint."""
     return {"status": "ok", "model": DEFAULT_MODEL}
 
 
 @app.get("/logs/stats")
-def get_log_stats():
+async def get_log_stats():
     """Get logging statistics (for monitoring)."""
     from pathlib import Path
     from logging_config import LOG_DIR
