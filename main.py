@@ -95,7 +95,7 @@ async def shutdown_event():
 
 
 @app.post("/api/docAI/v1/process", response_model=TextTaskResponse)
-def process_text(req: TextTaskRequest):
+async def process_text(req: TextTaskRequest):
     """
     Process text with the specified task.
 
@@ -153,7 +153,7 @@ def process_text(req: TextTaskRequest):
                 )
 
             # Generate with logging (user_id is in context)
-            output = generate_text_with_logging(
+            output = await generate_text_with_logging(
                 prompt=prompt,
                 model=req.model,
                 task=req.task
@@ -161,7 +161,7 @@ def process_text(req: TextTaskRequest):
 
             # Store in refinement store for potential refinement cycle
             store = get_refinement_store()
-            refinement_data = store.create(
+            refinement_data = await store.create(
                 task=req.task,
                 result=output,
                 original_text=req.text,
@@ -193,7 +193,7 @@ def process_text(req: TextTaskRequest):
 
 
 @app.post("/api/docAI/v1/refine", response_model=RefinementResponse)
-def refine_result(req: RefinementRequest):
+async def refine_result(req: RefinementRequest):
     """
     Refine a previous result based on user feedback.
 
@@ -215,7 +215,7 @@ def refine_result(req: RefinementRequest):
     try:
         # Get stored data
         store = get_refinement_store()
-        data = store.get(request_id)
+        data = await store.get(request_id)
 
         if not data:
             logger.warning(f"REFINE_NOT_FOUND | request_id={request_id}")
@@ -258,14 +258,14 @@ def refine_result(req: RefinementRequest):
         # Set user context for logging
         with RequestContext(user_id=req.user_id or data.user_id):
             # Generate refined result
-            refined_output = generate_text_with_logging(
+            refined_output = await generate_text_with_logging(
                 prompt=prompt,
                 model=data.model,
                 task=f"refine_{data.task}"
             )
 
             # Update store (overwrites previous result)
-            updated_data = store.update(
+            updated_data = await store.update(
                 request_id=request_id,
                 new_result=refined_output,
                 user_id=req.user_id
@@ -297,7 +297,7 @@ def refine_result(req: RefinementRequest):
 
 
 @app.post("/api/docAI/v1/regenerate", response_model=RegenerateResponse)
-def regenerate_result(req: RegenerateRequest):
+async def regenerate_result(req: RegenerateRequest):
     """
     Regenerate output from ORIGINAL TEXT with new instructions.
 
@@ -321,7 +321,7 @@ def regenerate_result(req: RegenerateRequest):
     try:
         # Get stored data
         store = get_refinement_store()
-        data = store.get(request_id)
+        data = await store.get(request_id)
 
         if not data:
             logger.warning(f"REGENERATE_NOT_FOUND | request_id={request_id}")
@@ -364,14 +364,14 @@ def regenerate_result(req: RegenerateRequest):
         # Set user context for logging
         with RequestContext(user_id=req.user_id or data.user_id):
             # Generate regenerated result
-            regenerated_output = generate_text_with_logging(
+            regenerated_output = await generate_text_with_logging(
                 prompt=prompt,
                 model=data.model,
                 task=f"regenerate_{data.task}"
             )
 
             # Update store with regeneration (overwrites previous result)
-            updated_data = store.update_regeneration(
+            updated_data = await store.update_regeneration(
                 request_id=request_id,
                 new_result=regenerated_output,
                 user_id=req.user_id
@@ -403,7 +403,7 @@ def regenerate_result(req: RegenerateRequest):
 
 
 @app.post("/api/docAI/v1/status", response_model=RefinementStatusResponse)
-def get_session_status(req: SessionStatusRequest):
+async def get_session_status(req: SessionStatusRequest):
     """
     Get the current status of a session.
 
@@ -414,7 +414,7 @@ def get_session_status(req: SessionStatusRequest):
 
     try:
         store = get_refinement_store()
-        data = store.get(request_id)
+        data = await store.get(request_id)
 
         if not data:
             raise HTTPException(
@@ -422,7 +422,7 @@ def get_session_status(req: SessionStatusRequest):
                 detail=f"Request ID '{request_id}' not found or expired"
             )
 
-        ttl = store.get_ttl(request_id)
+        ttl = await store.get_ttl(request_id)
 
         return RefinementStatusResponse(
             request_id=data.request_id,
@@ -445,7 +445,7 @@ def get_session_status(req: SessionStatusRequest):
 
 
 @app.post("/api/docAI/v1/delete")
-def end_session(req: SessionDeleteRequest):
+async def end_session(req: SessionDeleteRequest):
     """
     End a session and clean up stored data.
 
@@ -459,10 +459,10 @@ def end_session(req: SessionDeleteRequest):
         store = get_refinement_store()
 
         # Get data first to log user_id
-        data = store.get(request_id)
+        data = await store.get(request_id)
         user_info = f" | user_id={data.user_id}" if data and data.user_id else ""
 
-        if store.delete(request_id):
+        if await store.delete(request_id):
             logger.info(f"SESSION_DELETED | request_id={request_id}{user_info}")
             return {
                 "status": "deleted",
@@ -483,7 +483,7 @@ def end_session(req: SessionDeleteRequest):
 
 
 @app.post("/api/docAI/v1/extend")
-def extend_session_ttl(req: SessionExtendRequest):
+async def extend_session_ttl(req: SessionExtendRequest):
     """
     Extend the TTL for a session.
 
@@ -496,8 +496,8 @@ def extend_session_ttl(req: SessionExtendRequest):
     try:
         store = get_refinement_store()
 
-        if store.extend_ttl(request_id, ttl_seconds):
-            new_ttl = store.get_ttl(request_id)
+        if await store.extend_ttl(request_id, ttl_seconds):
+            new_ttl = await store.get_ttl(request_id)
             return {
                 "status": "extended",
                 "request_id": request_id,
@@ -517,13 +517,13 @@ def extend_session_ttl(req: SessionExtendRequest):
 
 
 @app.get("/health")
-def health():
+async def health():
     """Health check endpoint."""
     return {"status": "ok", "model": DEFAULT_MODEL}
 
 
 @app.get("/logs/stats")
-def get_log_stats():
+async def get_log_stats():
     """Get logging statistics (for monitoring)."""
     from pathlib import Path
     from logging_config import LOG_DIR
