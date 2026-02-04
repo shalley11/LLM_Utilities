@@ -2,12 +2,12 @@
 Gemma-3 Text Task API with comprehensive logging and refinement cycle.
 
 Endpoints:
-- POST /api/v1/text/process: Process text with various tasks (returns request_id)
-- POST /api/v1/text/refine: Refine previous result based on feedback (uses current_result)
-- POST /api/v1/text/regenerate: Regenerate from original text with new instructions (uses original_text)
-- POST /api/v1/text/status: Get current session status
-- POST /api/v1/text/delete: End session and cleanup
-- POST /api/v1/text/extend: Extend session TTL
+- POST /api/docAI/v1/process: Process text with various tasks (returns request_id)
+- POST /api/docAI/v1/refine: Refine previous result based on feedback (uses current_result)
+- POST /api/docAI/v1/regenerate: Regenerate from original text with new instructions (uses original_text)
+- POST /api/docAI/v1/status: Get current session status
+- POST /api/docAI/v1/delete: End session and cleanup
+- POST /api/docAI/v1/extend: Extend session TTL
 - GET /health: Health check endpoint
 """
 
@@ -54,12 +54,12 @@ Supports **Summary, Translation, Rephrase, and Deduplication** tasks with iterat
 
 | Endpoint | Description |
 |----------|-------------|
-| `POST /api/v1/text/process` | Process text and get a `request_id` for further refinement |
-| `POST /api/v1/text/refine` | Refine current result (uses `current_result` - smaller context) |
-| `POST /api/v1/text/regenerate` | Regenerate from original text (uses `original_text` - fresh start) |
-| `POST /api/v1/text/status` | Get session status, counts, and TTL |
-| `POST /api/v1/text/delete` | End session and cleanup |
-| `POST /api/v1/text/extend` | Extend session TTL |
+| `POST /api/docAI/v1/process` | Process text and get a `request_id` for further refinement |
+| `POST /api/docAI/v1/refine` | Refine current result (uses `current_result` - smaller context) |
+| `POST /api/docAI/v1/regenerate` | Regenerate from original text (uses `original_text` - fresh start) |
+| `POST /api/docAI/v1/status` | Get session status, counts, and TTL |
+| `POST /api/docAI/v1/delete` | End session and cleanup |
+| `POST /api/docAI/v1/extend` | Extend session TTL |
 
 ### Refine vs Regenerate
 
@@ -94,7 +94,7 @@ async def shutdown_event():
     logger.info("TEXT TASK API SHUTTING DOWN")
 
 
-@app.post("/api/v1/text/process", response_model=TextTaskResponse)
+@app.post("/api/docAI/v1/process", response_model=TextTaskResponse)
 def process_text(req: TextTaskRequest):
     """
     Process text with the specified task.
@@ -192,7 +192,7 @@ def process_text(req: TextTaskRequest):
             raise HTTPException(status_code=500, detail="Failed to process text. Please try again.")
 
 
-@app.post("/api/v1/text/refine", response_model=RefinementResponse)
+@app.post("/api/docAI/v1/refine", response_model=RefinementResponse)
 def refine_result(req: RefinementRequest):
     """
     Refine a previous result based on user feedback.
@@ -222,7 +222,7 @@ def refine_result(req: RefinementRequest):
             raise HTTPException(
                 status_code=404,
                 detail=f"Request ID '{request_id}' not found or expired. "
-                       f"Please start a new session with /api/v1/text/process"
+                       f"Please start a new session with /api/docAI/v1/process"
             )
 
         # Build refinement prompt
@@ -296,7 +296,7 @@ def refine_result(req: RefinementRequest):
         raise HTTPException(status_code=500, detail="Failed to refine result. Please try again.")
 
 
-@app.post("/api/v1/text/regenerate", response_model=RegenerateResponse)
+@app.post("/api/docAI/v1/regenerate", response_model=RegenerateResponse)
 def regenerate_result(req: RegenerateRequest):
     """
     Regenerate output from ORIGINAL TEXT with new instructions.
@@ -328,7 +328,7 @@ def regenerate_result(req: RegenerateRequest):
             raise HTTPException(
                 status_code=404,
                 detail=f"Request ID '{request_id}' not found or expired. "
-                       f"Please start a new session with /api/v1/text/process"
+                       f"Please start a new session with /api/docAI/v1/process"
             )
 
         # Build regeneration prompt (uses ORIGINAL TEXT)
@@ -402,7 +402,7 @@ def regenerate_result(req: RegenerateRequest):
         raise HTTPException(status_code=500, detail="Failed to regenerate result. Please try again.")
 
 
-@app.post("/api/v1/text/status", response_model=RefinementStatusResponse)
+@app.post("/api/docAI/v1/status", response_model=RefinementStatusResponse)
 def get_session_status(req: SessionStatusRequest):
     """
     Get the current status of a session.
@@ -444,7 +444,7 @@ def get_session_status(req: SessionStatusRequest):
         raise HTTPException(status_code=500, detail="Failed to get session status. Please try again.")
 
 
-@app.post("/api/v1/text/delete")
+@app.post("/api/docAI/v1/delete")
 def end_session(req: SessionDeleteRequest):
     """
     End a session and clean up stored data.
@@ -482,7 +482,7 @@ def end_session(req: SessionDeleteRequest):
         raise HTTPException(status_code=500, detail="Failed to end session. Please try again.")
 
 
-@app.post("/api/v1/text/extend")
+@app.post("/api/docAI/v1/extend")
 def extend_session_ttl(req: SessionExtendRequest):
     """
     Extend the TTL for a session.
