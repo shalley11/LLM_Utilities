@@ -2,15 +2,16 @@
 Gemma-3 Text Task API with comprehensive logging and refinement cycle.
 
 Endpoints:
-- POST /process-text: Process text with various tasks (returns request_id)
-- POST /refine/{request_id}: Refine previous result based on feedback (uses current_result)
-- POST /regenerate/{request_id}: Regenerate from original text with new instructions (uses original_text)
-- GET /refine/{request_id}: Get current refinement status
-- DELETE /refine/{request_id}: End refinement session
+- POST /api/v1/text/process: Process text with various tasks (returns request_id)
+- POST /api/v1/text/refine: Refine previous result based on feedback (uses current_result)
+- POST /api/v1/text/regenerate: Regenerate from original text with new instructions (uses original_text)
+- POST /api/v1/text/status: Get current session status
+- POST /api/v1/text/delete: End session and cleanup
+- POST /api/v1/text/extend: Extend session TTL
 - GET /health: Health check endpoint
 """
 
-from fastapi import FastAPI, HTTPException, Path
+from fastapi import FastAPI, HTTPException
 from schemas import (
     TextTaskRequest,
     TextTaskResponse,
@@ -18,7 +19,10 @@ from schemas import (
     RefinementResponse,
     RefinementStatusResponse,
     RegenerateRequest,
-    RegenerateResponse
+    RegenerateResponse,
+    SessionStatusRequest,
+    SessionDeleteRequest,
+    SessionExtendRequest
 )
 from prompts import get_prompt, get_refinement_prompt, get_regenerate_prompt
 from llm_client import generate_text_with_logging
@@ -50,11 +54,12 @@ Supports **Summary, Translation, Rephrase, and Deduplication** tasks with iterat
 
 | Endpoint | Description |
 |----------|-------------|
-| `POST /process-text` | Process text and get a `request_id` for further refinement |
-| `POST /refine/{id}` | Refine current result (uses `current_result` - smaller context) |
-| `POST /regenerate/{id}` | Regenerate from original text (uses `original_text` - fresh start) |
-| `GET /refine/{id}` | Get session status, counts, and TTL |
-| `DELETE /refine/{id}` | End session and cleanup |
+| `POST /api/v1/text/process` | Process text and get a `request_id` for further refinement |
+| `POST /api/v1/text/refine` | Refine current result (uses `current_result` - smaller context) |
+| `POST /api/v1/text/regenerate` | Regenerate from original text (uses `original_text` - fresh start) |
+| `POST /api/v1/text/status` | Get session status, counts, and TTL |
+| `POST /api/v1/text/delete` | End session and cleanup |
+| `POST /api/v1/text/extend` | Extend session TTL |
 
 ### Refine vs Regenerate
 
@@ -65,7 +70,7 @@ Supports **Summary, Translation, Rephrase, and Deduplication** tasks with iterat
 
 Requests exceeding model context limit (e.g., 8192 tokens for gemma3) are rejected with HTTP 400 to prevent truncation.
 """,
-    version="2.1.0"
+    version="2.4.0"
 )
 
 
@@ -89,7 +94,7 @@ async def shutdown_event():
     logger.info("TEXT TASK API SHUTTING DOWN")
 
 
-@app.post("/process-text", response_model=TextTaskResponse)
+@app.post("/api/v1/text/process", response_model=TextTaskResponse)
 def process_text(req: TextTaskRequest):
     """
     Process text with the specified task.
@@ -187,11 +192,8 @@ def process_text(req: TextTaskRequest):
             raise HTTPException(status_code=500, detail="Failed to process text. Please try again.")
 
 
-@app.post("/refine/{request_id}", response_model=RefinementResponse)
-def refine_result(
-    request_id: str = Path(..., description="Request ID from process-text response"),
-    req: RefinementRequest = ...
-):
+@app.post("/api/v1/text/refine", response_model=RefinementResponse)
+def refine_result(req: RefinementRequest):
     """
     Refine a previous result based on user feedback.
 
@@ -203,6 +205,7 @@ def refine_result(
 
     Use cases: proofreading, rephrasing, iterative improvements
     """
+    request_id = req.request_id
     user_info = f" | user_id={req.user_id}" if req.user_id else ""
     logger.info(
         f"REFINE_REQUEST | request_id={request_id} | "
@@ -219,7 +222,7 @@ def refine_result(
             raise HTTPException(
                 status_code=404,
                 detail=f"Request ID '{request_id}' not found or expired. "
-                       f"Please start a new session with /process-text"
+                       f"Please start a new session with /api/v1/text/process"
             )
 
         # Build refinement prompt
@@ -293,11 +296,8 @@ def refine_result(
         raise HTTPException(status_code=500, detail="Failed to refine result. Please try again.")
 
 
-@app.post("/regenerate/{request_id}", response_model=RegenerateResponse)
-def regenerate_result(
-    request_id: str = Path(..., description="Request ID from process-text response"),
-    req: RegenerateRequest = ...
-):
+@app.post("/api/v1/text/regenerate", response_model=RegenerateResponse)
+def regenerate_result(req: RegenerateRequest):
     """
     Regenerate output from ORIGINAL TEXT with new instructions.
 
@@ -311,6 +311,7 @@ def regenerate_result(
     - You want to start fresh with different instructions
     - You need output based on original content, not refined version
     """
+    request_id = req.request_id
     user_info = f" | user_id={req.user_id}" if req.user_id else ""
     logger.info(
         f"REGENERATE_REQUEST | request_id={request_id} | "
@@ -327,7 +328,7 @@ def regenerate_result(
             raise HTTPException(
                 status_code=404,
                 detail=f"Request ID '{request_id}' not found or expired. "
-                       f"Please start a new session with /process-text"
+                       f"Please start a new session with /api/v1/text/process"
             )
 
         # Build regeneration prompt (uses ORIGINAL TEXT)
@@ -401,16 +402,15 @@ def regenerate_result(
         raise HTTPException(status_code=500, detail="Failed to regenerate result. Please try again.")
 
 
-@app.get("/refine/{request_id}", response_model=RefinementStatusResponse)
-def get_refinement_status(
-    request_id: str = Path(..., description="Request ID to check")
-):
+@app.post("/api/v1/text/status", response_model=RefinementStatusResponse)
+def get_session_status(req: SessionStatusRequest):
     """
-    Get the current status of a refinement session.
+    Get the current status of a session.
 
     Returns the current result and metadata.
     """
-    logger.debug(f"REFINE_STATUS_REQUEST | request_id={request_id}")
+    request_id = req.request_id
+    logger.debug(f"SESSION_STATUS_REQUEST | request_id={request_id}")
 
     try:
         store = get_refinement_store()
@@ -440,21 +440,20 @@ def get_refinement_status(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"REFINE_STATUS_ERROR | request_id={request_id} | error={str(e)}")
+        logger.error(f"SESSION_STATUS_ERROR | request_id={request_id} | error={str(e)}")
         raise HTTPException(status_code=500, detail="Failed to get session status. Please try again.")
 
 
-@app.delete("/refine/{request_id}")
-def end_refinement_session(
-    request_id: str = Path(..., description="Request ID to delete")
-):
+@app.post("/api/v1/text/delete")
+def end_session(req: SessionDeleteRequest):
     """
-    End a refinement session and clean up stored data.
+    End a session and clean up stored data.
 
     Call this when the user is satisfied with the result
     or wants to abandon the refinement cycle.
     """
-    logger.info(f"REFINE_DELETE_REQUEST | request_id={request_id}")
+    request_id = req.request_id
+    logger.info(f"SESSION_DELETE_REQUEST | request_id={request_id}")
 
     try:
         store = get_refinement_store()
@@ -464,11 +463,11 @@ def end_refinement_session(
         user_info = f" | user_id={data.user_id}" if data and data.user_id else ""
 
         if store.delete(request_id):
-            logger.info(f"REFINE_DELETED | request_id={request_id}{user_info}")
+            logger.info(f"SESSION_DELETED | request_id={request_id}{user_info}")
             return {
                 "status": "deleted",
                 "request_id": request_id,
-                "message": "Refinement session ended successfully"
+                "message": "Session ended successfully"
             }
         else:
             raise HTTPException(
@@ -479,21 +478,20 @@ def end_refinement_session(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"REFINE_DELETE_ERROR | request_id={request_id} | error={str(e)}")
+        logger.error(f"SESSION_DELETE_ERROR | request_id={request_id} | error={str(e)}")
         raise HTTPException(status_code=500, detail="Failed to end session. Please try again.")
 
 
-@app.post("/refine/{request_id}/extend")
-def extend_refinement_ttl(
-    request_id: str = Path(..., description="Request ID to extend"),
-    ttl_seconds: int = 3600
-):
+@app.post("/api/v1/text/extend")
+def extend_session_ttl(req: SessionExtendRequest):
     """
-    Extend the TTL for a refinement session.
+    Extend the TTL for a session.
 
     Default extension is 1 hour (3600 seconds).
     """
-    logger.info(f"REFINE_EXTEND_REQUEST | request_id={request_id} | ttl={ttl_seconds}")
+    request_id = req.request_id
+    ttl_seconds = req.ttl_seconds
+    logger.info(f"SESSION_EXTEND_REQUEST | request_id={request_id} | ttl={ttl_seconds}")
 
     try:
         store = get_refinement_store()
@@ -514,7 +512,7 @@ def extend_refinement_ttl(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"REFINE_EXTEND_ERROR | request_id={request_id} | error={str(e)}")
+        logger.error(f"SESSION_EXTEND_ERROR | request_id={request_id} | error={str(e)}")
         raise HTTPException(status_code=500, detail="Failed to extend session. Please try again.")
 
 

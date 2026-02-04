@@ -56,6 +56,10 @@ class TextTaskResponse(BaseModel):
 
 class RefinementRequest(BaseModel):
     """Request for refining a previous result."""
+    request_id: str = Field(
+        ...,
+        description="Request ID from process response"
+    )
     user_feedback: str = Field(
         ...,
         description="User's feedback or instructions for refinement",
@@ -65,6 +69,10 @@ class RefinementRequest(BaseModel):
     user_id: Optional[str] = Field(
         None,
         description="Optional user identifier for tracking"
+    )
+    user_name: Optional[str] = Field(
+        None,
+        description="Optional user name for logging"
     )
 
 
@@ -98,6 +106,10 @@ class RefinementStatusResponse(BaseModel):
 
 class RegenerateRequest(BaseModel):
     """Request for regenerating from original text with new instructions."""
+    request_id: str = Field(
+        ...,
+        description="Request ID from process response"
+    )
     user_feedback: str = Field(
         ...,
         description="User's instructions for regeneration (applied to original text)",
@@ -107,6 +119,10 @@ class RegenerateRequest(BaseModel):
     user_id: Optional[str] = Field(
         None,
         description="Optional user identifier for tracking"
+    )
+    user_name: Optional[str] = Field(
+        None,
+        description="Optional user name for logging"
     )
 
 
@@ -118,3 +134,59 @@ class RegenerateResponse(BaseModel):
     task: str = Field(..., description="Original task type")
     model: str = Field(..., description="Model used")
     user_id: Optional[str] = None
+
+
+# =========================
+# Session Management Models
+# =========================
+
+class SessionStatusRequest(BaseModel):
+    """Request for getting session status."""
+    request_id: str = Field(
+        ...,
+        description="Request ID to check status"
+    )
+    user_id: Optional[str] = Field(
+        None,
+        description="Optional user identifier for tracking"
+    )
+    user_name: Optional[str] = Field(
+        None,
+        description="Optional user name for logging"
+    )
+
+
+class SessionDeleteRequest(BaseModel):
+    """Request for deleting a session."""
+    request_id: str = Field(
+        ...,
+        description="Request ID to delete"
+    )
+    user_id: Optional[str] = Field(
+        None,
+        description="Optional user identifier for tracking"
+    )
+    user_name: Optional[str] = Field(
+        None,
+        description="Optional user name for logging"
+    )
+
+
+class SessionExtendRequest(BaseModel):
+    """Request for extending session TTL."""
+    request_id: str = Field(
+        ...,
+        description="Request ID to extend"
+    )
+    ttl_seconds: int = Field(
+        3600,
+        description="TTL extension in seconds (default: 1 hour)"
+    )
+    user_id: Optional[str] = Field(
+        None,
+        description="Optional user identifier for tracking"
+    )
+    user_name: Optional[str] = Field(
+        None,
+        description="Optional user name for logging"
+    )
