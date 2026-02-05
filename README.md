@@ -231,6 +231,14 @@ EXTRACTOR_MAX_PAGES = 50              # Page limit guardrail
 EXTRACTOR_MAX_FILE_SIZE_MB = 50       # File size limit
 ```
 
+**Logging** (`logs/config.py`):
+```python
+LOG_OUTPUT_DIR = "logs/output/"       # Log files directory
+LOG_MAX_BYTES = 10 * 1024 * 1024      # Max log file size (10MB)
+LOG_BACKUP_COUNT = 5                  # Number of backup files
+LOG_PREVIEW_LENGTH = 200              # Preview length in logs
+```
+
 ### Environment Variables
 
 Configure via environment variables:
@@ -257,6 +265,14 @@ export EDITOR_DEFAULT_MODEL="gemma3:4b"
 # Guardrails
 export EXTRACTOR_MAX_PAGES="50"
 export TRANSLATION_MAX_TOKEN_PERCENT="80"
+export EDITOR_MAX_TOKEN_PERCENT="80"
+export SUMMARIZATION_MAX_TOKEN_PERCENT="80"
+
+# Logging
+export LOG_OUTPUT_DIR="logs/output/"
+export LOG_MAX_BYTES="10485760"
+export LOG_BACKUP_COUNT="5"
+export LOG_PREVIEW_LENGTH="200"
 export EDITOR_MAX_TOKEN_PERCENT="80"
 export SUMMARIZATION_MAX_TOKEN_PERCENT="80"
 
