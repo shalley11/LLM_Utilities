@@ -150,6 +150,19 @@ LLM_Utilities/
 | `/api/docAI/v1/editor/tasks` | GET | List supported editing tasks |
 | `/api/docAI/v1/editor/config` | GET | Get editor config |
 
+### Refinements (Session Management)
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/docAI/v1/refinements/create` | POST | Create new refinement session |
+| `/api/docAI/v1/refinements/get/{request_id}` | GET | Get session data |
+| `/api/docAI/v1/refinements/update` | POST | Update session with refined result |
+| `/api/docAI/v1/refinements/regenerate` | POST | Update session with regenerated result |
+| `/api/docAI/v1/refinements/delete/{request_id}` | DELETE | Delete session |
+| `/api/docAI/v1/refinements/extend` | POST | Extend session TTL |
+| `/api/docAI/v1/refinements/status/{request_id}` | GET | Get session status |
+| `/api/docAI/v1/refinements/config` | GET | Get refinement config |
+
 ### Core Processing
 
 | Endpoint | Method | Description |
@@ -239,6 +252,14 @@ LOG_BACKUP_COUNT = 5                  # Number of backup files
 LOG_PREVIEW_LENGTH = 200              # Preview length in logs
 ```
 
+**Refinements** (`refinements/config.py`):
+```python
+REFINEMENT_KEY_PREFIX = "refine"      # Redis key prefix
+REFINEMENT_DEFAULT_TTL = 7200         # Session TTL (2 hours)
+REFINEMENT_MAX_ITERATIONS = 10        # Max refinements per session
+REFINEMENT_MAX_REGENERATIONS = 5      # Max regenerations per session
+```
+
 ### Environment Variables
 
 Configure via environment variables:
@@ -273,8 +294,12 @@ export LOG_OUTPUT_DIR="logs/output/"
 export LOG_MAX_BYTES="10485760"
 export LOG_BACKUP_COUNT="5"
 export LOG_PREVIEW_LENGTH="200"
-export EDITOR_MAX_TOKEN_PERCENT="80"
-export SUMMARIZATION_MAX_TOKEN_PERCENT="80"
+
+# Refinements
+export REFINEMENT_KEY_PREFIX="refine"
+export REFINEMENT_DEFAULT_TTL="7200"
+export REFINEMENT_MAX_ITERATIONS="10"
+export REFINEMENT_MAX_REGENERATIONS="5"
 
 # Redis
 export REDIS_HOST="localhost"
