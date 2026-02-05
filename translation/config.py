@@ -29,3 +29,10 @@ TRANSLATION_MAX_BATCH_SIZE = int(os.getenv("TRANSLATION_MAX_BATCH_SIZE", "50"))
 # =========================
 
 TRANSLATION_TEMPERATURE = float(os.getenv("TRANSLATION_TEMPERATURE", "0.3"))
+
+# =========================
+# Token Limits
+# =========================
+
+# Maximum tokens allowed for input text (percentage of model context)
+TRANSLATION_MAX_TOKEN_PERCENT = int(os.getenv("TRANSLATION_MAX_TOKEN_PERCENT", "80"))

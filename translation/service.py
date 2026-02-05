@@ -13,7 +13,9 @@ from .config import (
     TRANSLATION_DEFAULT_MODEL,
     TRANSLATION_AUTO_DETECT_SOURCE,
     TRANSLATION_MAX_BATCH_SIZE,
+    TRANSLATION_MAX_TOKEN_PERCENT,
 )
+from config import estimate_tokens, get_model_context_length
 from .schemas import (
     TranslationRequest,
     TranslationResponse,
@@ -24,6 +26,39 @@ from .schemas import (
 from .translator import Translator
 
 logger = logging.getLogger(__name__)
+
+
+def validate_token_count(text: str, model: str) -> None:
+    """
+    Validate that text does not exceed token limit for the model.
+
+    Raises:
+        HTTPException: If token count exceeds limit
+    """
+    estimated_tokens = estimate_tokens(text)
+    model_context = get_model_context_length(model)
+    max_tokens = int(model_context * (TRANSLATION_MAX_TOKEN_PERCENT / 100))
+
+    if estimated_tokens > max_tokens:
+        usage_percent = (estimated_tokens / max_tokens) * 100
+        logger.warning(
+            f"[GUARDRAIL] Token limit exceeded | tokens={estimated_tokens} | "
+            f"max={max_tokens} | model={model} | usage={usage_percent:.1f}%"
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "token_limit_exceeded",
+                "message": f"Text contains approximately {estimated_tokens:,} tokens which exceeds the maximum allowed limit of {max_tokens:,} tokens.",
+                "estimated_tokens": estimated_tokens,
+                "max_tokens": max_tokens,
+                "model": model,
+                "model_context_length": model_context,
+                "usage_percent": round(usage_percent, 2),
+                "suggestion": "Please reduce the text length or split into smaller chunks for processing."
+            }
+        )
+
 
 # Create router
 router = APIRouter(prefix="/api/docAI/v1/translate", tags=["Translation"])
@@ -58,13 +93,18 @@ async def translate_text_endpoint(request: TranslationRequest):
     # Generate request_id if not provided (fresh request)
     request_id = request.request_id or str(uuid.uuid4())
 
+    model = request.model or TRANSLATION_DEFAULT_MODEL
+
     logger.info(
         f"[TRANSLATE_TEXT] START | request_id={request_id} | "
         f"chars={len(request.text)} | target={request.target_language} | "
         f"user_id={request.user_id} | user_name={request.user_name}"
     )
 
-    translator = Translator(model=request.model or TRANSLATION_DEFAULT_MODEL)
+    # Validate token count
+    validate_token_count(request.text, model)
+
+    translator = Translator(model=model)
 
     try:
         translated_text, detected_language = await translator.translate(
@@ -125,13 +165,24 @@ async def translate_batch_endpoint(request: BatchTranslationRequest):
     # Generate request_id if not provided (fresh request)
     request_id = request.request_id or str(uuid.uuid4())
 
+    model = request.model or TRANSLATION_DEFAULT_MODEL
+
     logger.info(
         f"[TRANSLATE_BATCH] START | request_id={request_id} | "
         f"items={len(request.texts)} | target={request.target_language} | "
         f"user_id={request.user_id} | user_name={request.user_name}"
     )
 
-    translator = Translator(model=request.model or TRANSLATION_DEFAULT_MODEL)
+    # Validate token count for each text in batch
+    for i, text in enumerate(request.texts):
+        try:
+            validate_token_count(text, model)
+        except HTTPException as e:
+            # Add index info to the error
+            e.detail["batch_index"] = i
+            raise e
+
+    translator = Translator(model=model)
 
     try:
         results = await translator.translate_batch(

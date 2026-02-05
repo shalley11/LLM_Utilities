@@ -37,3 +37,10 @@ SUMMARIZATION_FINAL_WORDS = int(os.getenv("SUMMARIZATION_FINAL_WORDS", "500"))
 # =========================
 
 SUMMARIZATION_TEMPERATURE = float(os.getenv("SUMMARIZATION_TEMPERATURE", "0.3"))
+
+# =========================
+# Token Limits
+# =========================
+
+# Maximum tokens allowed for input text (percentage of model context)
+SUMMARIZATION_MAX_TOKEN_PERCENT = int(os.getenv("SUMMARIZATION_MAX_TOKEN_PERCENT", "80"))

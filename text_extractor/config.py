@@ -29,4 +29,4 @@ EXTRACTOR_DEFAULT_INCLUDE_BLOCKS = False
 # =========================
 
 EXTRACTOR_MAX_FILE_SIZE_MB = int(os.getenv("EXTRACTOR_MAX_FILE_SIZE_MB", "50"))
-EXTRACTOR_MAX_PAGES = int(os.getenv("EXTRACTOR_MAX_PAGES", "500"))
+EXTRACTOR_MAX_PAGES = int(os.getenv("EXTRACTOR_MAX_PAGES", "50"))  # Maximum pages allowed for document processing

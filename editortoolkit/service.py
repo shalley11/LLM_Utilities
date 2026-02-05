@@ -14,7 +14,9 @@ from .config import (
     EDITOR_SUPPORTED_TASKS,
     EDITOR_TASK_DESCRIPTIONS,
     EDITOR_MAX_BATCH_SIZE,
+    EDITOR_MAX_TOKEN_PERCENT,
 )
+from config import estimate_tokens, get_model_context_length
 from .schemas import (
     EditorRequest,
     EditorResponse,
@@ -29,6 +31,39 @@ from .schemas import (
 from .editor import Editor
 
 logger = logging.getLogger(__name__)
+
+
+def validate_token_count(text: str, model: str) -> None:
+    """
+    Validate that text does not exceed token limit for the model.
+
+    Raises:
+        HTTPException: If token count exceeds limit
+    """
+    estimated_tokens = estimate_tokens(text)
+    model_context = get_model_context_length(model)
+    max_tokens = int(model_context * (EDITOR_MAX_TOKEN_PERCENT / 100))
+
+    if estimated_tokens > max_tokens:
+        usage_percent = (estimated_tokens / max_tokens) * 100
+        logger.warning(
+            f"[GUARDRAIL] Token limit exceeded | tokens={estimated_tokens} | "
+            f"max={max_tokens} | model={model} | usage={usage_percent:.1f}%"
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "token_limit_exceeded",
+                "message": f"Text contains approximately {estimated_tokens:,} tokens which exceeds the maximum allowed limit of {max_tokens:,} tokens.",
+                "estimated_tokens": estimated_tokens,
+                "max_tokens": max_tokens,
+                "model": model,
+                "model_context_length": model_context,
+                "usage_percent": round(usage_percent, 2),
+                "suggestion": "Please reduce the text length or split into smaller chunks for processing."
+            }
+        )
+
 
 # Create router
 router = APIRouter(prefix="/api/docAI/v1/editor", tags=["Editor Toolkit"])
@@ -61,13 +96,18 @@ async def edit_text_endpoint(request: EditorRequest):
     # Generate request_id if not provided (fresh request)
     request_id = request.request_id or str(uuid.uuid4())
 
+    model = request.model or EDITOR_DEFAULT_MODEL
+
     logger.info(
         f"[EDITOR] START | request_id={request_id} | "
         f"chars={len(request.text)} | task={request.task} | "
         f"user_id={request.user_id} | user_name={request.user_name}"
     )
 
-    editor = Editor(model=request.model or EDITOR_DEFAULT_MODEL)
+    # Validate token count
+    validate_token_count(request.text, model)
+
+    editor = Editor(model=model)
 
     try:
         edited_text = await editor.edit(
@@ -128,13 +168,21 @@ async def refine_text_endpoint(request: RefinementRequest):
     # Generate request_id if not provided (fresh request)
     request_id = request.request_id or str(uuid.uuid4())
 
+    model = request.model or EDITOR_DEFAULT_MODEL
+
     logger.info(
         f"[EDITOR_REFINE] START | request_id={request_id} | "
         f"task={request.task} | feedback_len={len(request.user_feedback)} | "
         f"user_id={request.user_id} | user_name={request.user_name}"
     )
 
-    editor = Editor(model=request.model or EDITOR_DEFAULT_MODEL)
+    # Validate token count for combined input
+    combined_text = request.current_result + request.user_feedback
+    if request.original_text:
+        combined_text += request.original_text
+    validate_token_count(combined_text, model)
+
+    editor = Editor(model=model)
 
     try:
         refined_result = await editor.refine(
@@ -193,13 +241,24 @@ async def edit_batch_endpoint(request: BatchEditorRequest):
     # Generate request_id if not provided (fresh request)
     request_id = request.request_id or str(uuid.uuid4())
 
+    model = request.model or EDITOR_DEFAULT_MODEL
+
     logger.info(
         f"[EDITOR_BATCH] START | request_id={request_id} | "
         f"items={len(request.texts)} | task={request.task} | "
         f"user_id={request.user_id} | user_name={request.user_name}"
     )
 
-    editor = Editor(model=request.model or EDITOR_DEFAULT_MODEL)
+    # Validate token count for each text in batch
+    for i, text in enumerate(request.texts):
+        try:
+            validate_token_count(text, model)
+        except HTTPException as e:
+            # Add index info to the error
+            e.detail["batch_index"] = i
+            raise e
+
+    editor = Editor(model=model)
 
     try:
         results = await editor.edit_batch(

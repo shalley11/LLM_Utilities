@@ -21,7 +21,9 @@ from .config import (
     SUMMARIZATION_MAX_WORDS_PER_BATCH,
     SUMMARIZATION_MAX_CHUNKS_PER_BATCH,
     SUMMARIZATION_INTERMEDIATE_WORDS,
+    SUMMARIZATION_MAX_TOKEN_PERCENT,
 )
+from config import estimate_tokens, get_model_context_length
 from text_extractor.config import EXTRACTOR_SUPPORTED_FILE_TYPES
 from chunking.config import CHUNKING_DEFAULT_OVERLAP, CHUNKING_DEFAULT_PROCESS_IMAGES
 from logs.logging_config import get_llm_logger, RequestContext
@@ -36,6 +38,39 @@ from .summarizer import (
 )
 
 logger = get_llm_logger()
+
+
+def validate_token_count(text: str, model: str) -> None:
+    """
+    Validate that text does not exceed token limit for the model.
+
+    Raises:
+        HTTPException: If token count exceeds limit
+    """
+    estimated_tokens = estimate_tokens(text)
+    model_context = get_model_context_length(model)
+    max_tokens = int(model_context * (SUMMARIZATION_MAX_TOKEN_PERCENT / 100))
+
+    if estimated_tokens > max_tokens:
+        usage_percent = (estimated_tokens / max_tokens) * 100
+        logger.warning(
+            f"[GUARDRAIL] Token limit exceeded | tokens={estimated_tokens} | "
+            f"max={max_tokens} | model={model} | usage={usage_percent:.1f}%"
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "token_limit_exceeded",
+                "message": f"Text contains approximately {estimated_tokens:,} tokens which exceeds the maximum allowed limit of {max_tokens:,} tokens.",
+                "estimated_tokens": estimated_tokens,
+                "max_tokens": max_tokens,
+                "model": model,
+                "model_context_length": model_context,
+                "usage_percent": round(usage_percent, 2),
+                "suggestion": "Please reduce the text length or split into smaller chunks for processing."
+            }
+        )
+
 
 router = APIRouter(prefix="/api/docAI/v1/summarize", tags=["Summarization"])
 
@@ -176,11 +211,12 @@ async def summarize_text_endpoint(request: TextSummarizationRequest):
 
     with RequestContext(request_id):
         text_length = len(request.text)
+        model = request.model or SUMMARIZATION_DEFAULT_MODEL
+
         logger.info(f"[SUMMARIZE_TEXT] START | request_id={request_id} | chars={text_length} | type={request.summary_type} | user_id={request.user_id} | user_name={request.user_name}")
         logger.info(f"[SUMMARIZE_TEXT] Pipeline: Text → Chunking → Summarization")
 
         try:
-            model = request.model or SUMMARIZATION_DEFAULT_MODEL
 
             # Step 1: Call Chunking Service
             chunks = await call_chunking_service(
@@ -399,6 +435,18 @@ async def summarize_chunks_endpoint(request: SummarizationRequest):
     with RequestContext(request_id):
         logger.info(f"[SUMMARIZE_CHUNKS] START | request_id={request_id} | chunks={len(request.chunks)} | type={request.summary_type} | user_id={request.user_id} | user_name={request.user_name}")
         logger.info(f"[SUMMARIZE_CHUNKS] Direct summarization (no pipeline)")
+
+        model = request.model or SUMMARIZATION_DEFAULT_MODEL
+
+        # Validate token count for each chunk
+        for i, chunk in enumerate(request.chunks):
+            try:
+                validate_token_count(chunk.text, model)
+            except HTTPException as e:
+                # Add chunk index info to the error
+                e.detail["chunk_index"] = i
+                e.detail["page_no"] = chunk.page_no
+                raise e
 
         try:
             # Build config

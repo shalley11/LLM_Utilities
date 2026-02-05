@@ -43,3 +43,10 @@ EDITOR_TEMPERATURE = float(os.getenv("EDITOR_TEMPERATURE", "0.3"))
 
 EDITOR_PROOFREAD_FOCUS_OPTIONS = ["general", "grammar", "punctuation", "clarity"]
 EDITOR_DEFAULT_PROOFREAD_FOCUS = "general"
+
+# =========================
+# Token Limits
+# =========================
+
+# Maximum tokens allowed for input text (percentage of model context)
+EDITOR_MAX_TOKEN_PERCENT = int(os.getenv("EDITOR_MAX_TOKEN_PERCENT", "80"))

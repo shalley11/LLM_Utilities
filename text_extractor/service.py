@@ -24,9 +24,32 @@ from .config import (
     EXTRACTOR_DEFAULT_INCLUDE_TABLES,
     EXTRACTOR_DEFAULT_INCLUDE_IMAGES,
     EXTRACTOR_DEFAULT_INCLUDE_BLOCKS,
+    EXTRACTOR_MAX_PAGES,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def validate_page_count(total_pages: Optional[int], max_pages: int = EXTRACTOR_MAX_PAGES) -> None:
+    """
+    Validate that document does not exceed page limit.
+
+    Raises:
+        HTTPException: If page count exceeds limit
+    """
+    if total_pages is not None and total_pages > max_pages:
+        logger.warning(f"[GUARDRAIL] Page limit exceeded | pages={total_pages} | max={max_pages}")
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "document_too_long",
+                "message": f"Document has {total_pages} pages which exceeds the maximum allowed limit of {max_pages} pages.",
+                "total_pages": total_pages,
+                "max_pages": max_pages,
+                "suggestion": "Please split the document into smaller parts (max 50 pages each) and process them separately."
+            }
+        )
+
 
 # Create router
 router = APIRouter(prefix="/api/docAI/v1/extract", tags=["Text Extraction"])
@@ -220,6 +243,9 @@ async def extract_from_upload(
             include_images=include_images
         )
 
+        # Validate page count
+        validate_page_count(result.metadata.total_pages)
+
         logger.info(f"[EXTRACT] END | request_id={request_id} | document_id={document_id} | blocks={result.metadata.total_blocks} | user_id={user_id}")
 
         # Build response
@@ -318,6 +344,9 @@ async def extract_simple(
             include_images=include_images
         )
 
+        # Validate page count
+        validate_page_count(result.metadata.total_pages)
+
         logger.info(f"[EXTRACT_SIMPLE] END | request_id={request_id} | document_id={document_id} | words={result.metadata.word_count} | user_id={user_id}")
 
         return SimpleExtractionResponse(
@@ -389,6 +418,9 @@ async def extract_from_path(
             include_tables=include_tables,
             include_images=include_images
         )
+
+        # Validate page count
+        validate_page_count(result.metadata.total_pages)
 
         logger.info(f"[EXTRACT_PATH] END | request_id={request_id} | document_id={doc_id} | blocks={result.metadata.total_blocks} | user_id={user_id}")
 
