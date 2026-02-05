@@ -9,6 +9,18 @@ Endpoints:
 - POST /api/docAI/v1/delete: End session and cleanup
 - POST /api/docAI/v1/extend: Extend session TTL
 - GET /health: Health check endpoint
+
+Text Extraction Endpoints:
+- POST /api/docAI/v1/extract/upload: Extract text from uploaded file (PDF, DOCX, DOC, TXT)
+- POST /api/docAI/v1/extract/upload/simple: Simple extraction (markdown only)
+- POST /api/docAI/v1/extract/path: Extract from server file path
+- DELETE /api/docAI/v1/extract/cleanup/{document_id}: Cleanup extracted files
+- GET /api/docAI/v1/extract/supported-types: List supported file types
+
+Chunking Endpoints:
+- POST /api/docAI/v1/chunk/process: Create chunks from markdown text with vision processing
+- POST /api/docAI/v1/chunk/config: Calculate optimal chunk configuration
+- GET /api/docAI/v1/chunk/models: List supported models with context lengths
 """
 
 from fastapi import FastAPI, HTTPException
@@ -24,20 +36,22 @@ from schemas import (
     SessionDeleteRequest,
     SessionExtendRequest
 )
-from prompts import get_prompt, get_refinement_prompt, get_regenerate_prompt
-from llm_client import generate_text_with_logging
+from LLM.prompts import get_prompt, get_refinement_prompt, get_regenerate_prompt
+from LLM.llm_client import generate_text_with_logging
 from config import (
     DEFAULT_MODEL,
     get_model_context_length,
     estimate_tokens,
     CONTEXT_REJECT_THRESHOLD
 )
-from logging_config import (
+from logs.logging_config import (
     setup_llm_logging,
     get_llm_logger,
     RequestContext
 )
-from refinement_store import get_refinement_store, RefinementData
+from refinements.refinement_store import get_refinement_store, RefinementData
+from text_extractor import router as text_extractor_router
+from chunking import router as chunking_router
 
 # Initialize logging
 setup_llm_logging()
@@ -61,6 +75,16 @@ Supports **Summary, Translation, Rephrase, and Deduplication** tasks with iterat
 | `POST /api/docAI/v1/delete` | End session and cleanup |
 | `POST /api/docAI/v1/extend` | Extend session TTL |
 
+### Text Extraction Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/docAI/v1/extract/upload` | Extract text from uploaded file (PDF, DOCX, DOC, TXT) |
+| `POST /api/docAI/v1/extract/upload/simple` | Simple extraction (markdown only) |
+| `POST /api/docAI/v1/extract/path` | Extract from server file path |
+| `DELETE /api/docAI/v1/extract/cleanup/{id}` | Cleanup extracted files |
+| `GET /api/docAI/v1/extract/supported-types` | List supported file types |
+
 ### Refine vs Regenerate
 
 - **Refine**: Incrementally improve the current output. Best for polishing, tweaking, minor corrections.
@@ -70,8 +94,12 @@ Supports **Summary, Translation, Rephrase, and Deduplication** tasks with iterat
 
 Requests exceeding model context limit (e.g., 8192 tokens for gemma3) are rejected with HTTP 400 to prevent truncation.
 """,
-    version="2.4.0"
+    version="2.5.0"
 )
+
+# Include text extraction router
+app.include_router(text_extractor_router)
+app.include_router(chunking_router)
 
 
 @app.on_event("startup")
@@ -79,6 +107,8 @@ async def startup_event():
     logger.info("=" * 50)
     logger.info("TEXT TASK API STARTING")
     logger.info(f"Default model: {DEFAULT_MODEL}")
+    logger.info("Text Extraction: Enabled (PDF, DOCX, DOC, TXT)")
+    logger.info("Chunking: Enabled (Page-wise with Vision processing)")
     logger.info("=" * 50)
 
     # Initialize refinement store
@@ -526,7 +556,7 @@ async def health():
 async def get_log_stats():
     """Get logging statistics (for monitoring)."""
     from pathlib import Path
-    from logging_config import LOG_DIR
+    from logs.logging_config import LOG_DIR
 
     stats = {}
     for log_file in LOG_DIR.glob("*.log"):

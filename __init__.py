@@ -27,13 +27,13 @@ from .config import (
     get_model_context_length,
     estimate_tokens
 )
-from .refinement_store import (
+from .refinements.refinement_store import (
     get_refinement_store,
     init_refinement_store,
     RefinementData,
     RefinementStore
 )
-from .llm_client import (
+from .LLM.llm_client import (
     generate_text,
     generate_text_with_logging,
     stream_text,
@@ -42,7 +42,7 @@ from .llm_client import (
     get_session,
     close_session
 )
-from .logging_config import (
+from .logs.logging_config import (
     setup_llm_logging,
     get_llm_logger,
     get_metrics_logger,

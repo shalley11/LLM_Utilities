@@ -23,7 +23,7 @@ from config import (
     DEFAULT_MODEL,
     get_model_context_length
 )
-from logging_config import (
+from logs.logging_config import (
     get_llm_logger,
     log_llm_request,
     log_llm_response,

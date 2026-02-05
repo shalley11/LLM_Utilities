@@ -14,7 +14,7 @@ from typing import Optional, Dict, Any
 from dataclasses import dataclass, asdict
 
 from config import REDIS_HOST, REDIS_PORT, REDIS_DB, REFINEMENT_TTL
-from logging_config import get_llm_logger
+from logs.logging_config import get_llm_logger
 
 logger = get_llm_logger()
 

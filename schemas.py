@@ -1,23 +1,9 @@
 from pydantic import BaseModel, Field
 from typing import Literal, Optional
 
-TaskType = Literal[
-    "summary",
-    "translate_en",
-    "rephrase",
-    "remove_repetitions",
-    "translate",
-    "professional",
-    "proofread",
-    "concise",
-]
-
-SummaryType = Literal[
-    "brief",
-    "detailed",
-    "bulletwise",
-    "executive"
-]
+# Task types supported by the API
+TaskType = Literal["summary", "translate", "rephrase", "remove_repetitions"]
+SummaryType = Literal["brief", "detailed", "bullets", "executive"]
 
 
 class TextTaskRequest(BaseModel):
