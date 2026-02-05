@@ -191,12 +191,22 @@ REFINEMENT_TTL = 7200  # 2 hours
 
 Each module has its own `config.py` with module-specific settings:
 
+**LLM Client** (`LLM/config.py`):
+```python
+LLM_CONNECTION_TIMEOUT = 300          # HTTP timeout in seconds
+LLM_CONNECTION_POOL_LIMIT = 100       # Max connections
+LLM_CONNECTION_POOL_LIMIT_PER_HOST = 20  # Max per host
+LLM_DEFAULT_TEMPERATURE = 0.3         # Generation temperature
+LLM_DEFAULT_MAX_TOKENS = 1024         # Max tokens to generate
+```
+
 **Summarization** (`summarization/config.py`):
 ```python
 SUMMARIZATION_DEFAULT_MODEL = "gemma3:4b"
 SUMMARIZATION_DEFAULT_TYPE = "detailed"
 SUMMARIZATION_MAX_WORDS_PER_BATCH = 3000
 SUMMARIZATION_TEMPERATURE = 0.3
+SUMMARIZATION_MAX_TOKEN_PERCENT = 80  # Token limit guardrail
 ```
 
 **Translation** (`translation/config.py`):
@@ -204,6 +214,7 @@ SUMMARIZATION_TEMPERATURE = 0.3
 TRANSLATION_DEFAULT_MODEL = "gemma3:4b"
 TRANSLATION_MAX_BATCH_SIZE = 50
 TRANSLATION_TEMPERATURE = 0.3
+TRANSLATION_MAX_TOKEN_PERCENT = 80    # Token limit guardrail
 ```
 
 **Editor Toolkit** (`editortoolkit/config.py`):
@@ -211,6 +222,13 @@ TRANSLATION_TEMPERATURE = 0.3
 EDITOR_DEFAULT_MODEL = "gemma3:4b"
 EDITOR_SUPPORTED_TASKS = ["rephrase", "professional", "proofread", "concise"]
 EDITOR_TEMPERATURE = 0.3
+EDITOR_MAX_TOKEN_PERCENT = 80         # Token limit guardrail
+```
+
+**Text Extractor** (`text_extractor/config.py`):
+```python
+EXTRACTOR_MAX_PAGES = 50              # Page limit guardrail
+EXTRACTOR_MAX_FILE_SIZE_MB = 50       # File size limit
 ```
 
 ### Environment Variables
@@ -224,10 +242,23 @@ export LLM_BACKEND="vllm"
 export OLLAMA_URL="http://localhost:11434"
 export VLLM_URL="http://localhost:8000"
 
+# LLM Client
+export LLM_CONNECTION_TIMEOUT="300"
+export LLM_CONNECTION_POOL_LIMIT="100"
+export LLM_CONNECTION_POOL_LIMIT_PER_HOST="20"
+export LLM_DEFAULT_TEMPERATURE="0.3"
+export LLM_DEFAULT_MAX_TOKENS="1024"
+
 # Module-specific models
 export SUMMARIZATION_DEFAULT_MODEL="llama3:8b"
 export TRANSLATION_DEFAULT_MODEL="gemma3:12b"
 export EDITOR_DEFAULT_MODEL="gemma3:4b"
+
+# Guardrails
+export EXTRACTOR_MAX_PAGES="50"
+export TRANSLATION_MAX_TOKEN_PERCENT="80"
+export EDITOR_MAX_TOKEN_PERCENT="80"
+export SUMMARIZATION_MAX_TOKEN_PERCENT="80"
 
 # Redis
 export REDIS_HOST="localhost"
