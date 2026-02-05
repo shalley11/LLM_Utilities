@@ -23,6 +23,13 @@ from config import (
     DEFAULT_MODEL,
     get_model_context_length
 )
+from .config import (
+    LLM_CONNECTION_TIMEOUT,
+    LLM_CONNECTION_POOL_LIMIT,
+    LLM_CONNECTION_POOL_LIMIT_PER_HOST,
+    LLM_DEFAULT_TEMPERATURE,
+    LLM_DEFAULT_MAX_TOKENS,
+)
 from logs.logging_config import (
     get_llm_logger,
     log_llm_request,
@@ -42,8 +49,11 @@ async def get_session() -> aiohttp.ClientSession:
     """Get or create the global aiohttp session for connection pooling."""
     global _session
     if _session is None or _session.closed:
-        timeout = aiohttp.ClientTimeout(total=300)
-        connector = aiohttp.TCPConnector(limit=100, limit_per_host=20)
+        timeout = aiohttp.ClientTimeout(total=LLM_CONNECTION_TIMEOUT)
+        connector = aiohttp.TCPConnector(
+            limit=LLM_CONNECTION_POOL_LIMIT,
+            limit_per_host=LLM_CONNECTION_POOL_LIMIT_PER_HOST
+        )
         _session = aiohttp.ClientSession(timeout=timeout, connector=connector)
     return _session
 
@@ -80,8 +90,8 @@ async def generate_text_with_logging(
     prompt: str,
     model: str | None = None,
     task: str = "generate",
-    temperature: float = 0.3,
-    max_tokens: int = 1024
+    temperature: float = None,
+    max_tokens: int = None
 ) -> str:
     """
     Generate text with explicit logging control.
@@ -97,6 +107,8 @@ async def generate_text_with_logging(
         Generated text response
     """
     model_name = model or DEFAULT_MODEL
+    temp = temperature if temperature is not None else LLM_DEFAULT_TEMPERATURE
+    max_tok = max_tokens if max_tokens is not None else LLM_DEFAULT_MAX_TOKENS
 
     # Get context limit for model
     context_limit = get_model_context_length(model_name)
@@ -107,8 +119,8 @@ async def generate_text_with_logging(
         backend=LLM_BACKEND,
         task=task,
         prompt=prompt,
-        temperature=temperature,
-        max_tokens=max_tokens
+        temperature=temp,
+        max_tokens=max_tok
     )
 
     # Log context usage and get stats
@@ -123,9 +135,9 @@ async def generate_text_with_logging(
 
     try:
         if LLM_BACKEND == "vllm":
-            response = await _call_vllm_internal(prompt, model_name, temperature, max_tokens)
+            response = await _call_vllm_internal(prompt, model_name, temp, max_tok)
         else:
-            response = await _call_ollama_internal(prompt, model_name, temperature)
+            response = await _call_ollama_internal(prompt, model_name, temp)
 
         latency_ms = (time.time() - start_time) * 1000
 
@@ -191,7 +203,7 @@ async def generate_text_with_logging(
 async def _call_ollama_internal(
     prompt: str,
     model: str,
-    temperature: float = 0.3
+    temperature: float = None
 ) -> str:
     """
     Call Ollama API with full parameters.
@@ -204,12 +216,14 @@ async def _call_ollama_internal(
     Returns:
         Generated text
     """
+    temp = temperature if temperature is not None else LLM_DEFAULT_TEMPERATURE
+
     payload = {
         "model": model,
         "prompt": prompt,
         "stream": False,
         "options": {
-            "temperature": temperature
+            "temperature": temp
         }
     }
 
@@ -246,8 +260,8 @@ async def _call_ollama_internal(
 async def _call_vllm_internal(
     prompt: str,
     model: str,
-    temperature: float = 0.3,
-    max_tokens: int = 1024
+    temperature: float = None,
+    max_tokens: int = None
 ) -> str:
     """
     Call VLLM API with full parameters.
@@ -261,11 +275,14 @@ async def _call_vllm_internal(
     Returns:
         Generated text
     """
+    temp = temperature if temperature is not None else LLM_DEFAULT_TEMPERATURE
+    max_tok = max_tokens if max_tokens is not None else LLM_DEFAULT_MAX_TOKENS
+
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": temperature,
-        "max_tokens": max_tokens
+        "temperature": temp,
+        "max_tokens": max_tok
     }
 
     logger.debug(f"Calling VLLM | url={VLLM_URL}/v1/chat/completions | model={model}")
@@ -307,7 +324,7 @@ async def _call_vllm_internal(
 async def stream_ollama(
     prompt: str,
     model: str | None = None,
-    temperature: float = 0.3,
+    temperature: float = None,
     task: str = "stream"
 ) -> AsyncGenerator[str, None]:
     """
@@ -323,6 +340,7 @@ async def stream_ollama(
         Individual tokens as they're generated
     """
     model_name = model or DEFAULT_MODEL
+    temp = temperature if temperature is not None else LLM_DEFAULT_TEMPERATURE
 
     # Get context limit for model
     context_limit = get_model_context_length(model_name)
@@ -333,7 +351,7 @@ async def stream_ollama(
         backend="ollama",
         task=task,
         prompt=prompt,
-        temperature=temperature
+        temperature=temp
     )
 
     # Log context usage
@@ -355,7 +373,7 @@ async def stream_ollama(
                 "model": model_name,
                 "prompt": prompt,
                 "stream": True,
-                "options": {"temperature": temperature}
+                "options": {"temperature": temp}
             }
         ) as response:
             response.raise_for_status()
@@ -436,8 +454,8 @@ async def stream_ollama(
 async def stream_vllm(
     prompt: str,
     model: str | None = None,
-    temperature: float = 0.3,
-    max_tokens: int = 1024,
+    temperature: float = None,
+    max_tokens: int = None,
     task: str = "stream"
 ) -> AsyncGenerator[str, None]:
     """
@@ -454,6 +472,8 @@ async def stream_vllm(
         Individual tokens as they're generated
     """
     model_name = model or DEFAULT_MODEL
+    temp = temperature if temperature is not None else LLM_DEFAULT_TEMPERATURE
+    max_tok = max_tokens if max_tokens is not None else LLM_DEFAULT_MAX_TOKENS
 
     # Get context limit for model
     context_limit = get_model_context_length(model_name)
@@ -464,8 +484,8 @@ async def stream_vllm(
         backend="vllm",
         task=task,
         prompt=prompt,
-        temperature=temperature,
-        max_tokens=max_tokens
+        temperature=temp,
+        max_tokens=max_tok
     )
 
     # Log context usage
@@ -486,8 +506,8 @@ async def stream_vllm(
             json={
                 "model": model_name,
                 "messages": [{"role": "user", "content": prompt}],
-                "temperature": temperature,
-                "max_tokens": max_tokens,
+                "temperature": temp,
+                "max_tokens": max_tok,
                 "stream": True
             }
         ) as response:
