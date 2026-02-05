@@ -26,8 +26,9 @@ env/
 *.swo
 *~
 
-# Logs
-logs/
+# Logs (keep Python files, ignore output)
+logs/output/
+logs/*.log
 *.log
 wheels/
 wheels.tar.xz

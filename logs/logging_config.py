@@ -28,27 +28,32 @@ from functools import wraps
 import time
 import uuid
 
+from .config import (
+    LOG_OUTPUT_DIR,
+    LOG_MAX_BYTES,
+    LOG_BACKUP_COUNT,
+    LOG_PREVIEW_LENGTH,
+    LOG_DATE_FORMAT,
+    LOG_DETAILED_FORMAT,
+    LOG_SIMPLE_FORMAT,
+    LOG_JSON_FORMAT,
+    LOG_FILE_REQUESTS,
+    LOG_FILE_ERRORS,
+    LOG_FILE_METRICS,
+)
+
 
 # =========================
 # Configuration
 # =========================
 
-LOG_DIR = Path(__file__).parent / "logs"
-LOG_DIR.mkdir(exist_ok=True)
+LOG_DIR = Path(LOG_OUTPUT_DIR)
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 # Context variables for request tracking (thread-safe)
 current_request_id: ContextVar[Optional[str]] = ContextVar('request_id', default=None)
 current_session_id: ContextVar[Optional[str]] = ContextVar('session_id', default=None)
 current_user_id: ContextVar[Optional[str]] = ContextVar('user_id', default=None)
-
-# Log formats (includes user_id)
-DETAILED_FORMAT = (
-    "%(asctime)s | %(levelname)-8s | %(request_id)-36s | %(user_id)-20s | "
-    "%(name)-25s | %(funcName)-20s | %(message)s"
-)
-SIMPLE_FORMAT = "%(asctime)s | %(levelname)-8s | %(request_id)-36s | %(user_id)-20s | %(message)s"
-JSON_FORMAT = "%(message)s"  # For structured JSON logs
-DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
 # =========================
@@ -227,19 +232,22 @@ def clear_user_id():
 def get_file_handler(
     filename: str,
     level=logging.DEBUG,
-    max_bytes=10*1024*1024,  # 10MB
-    backup_count=5,
-    format_str=DETAILED_FORMAT
+    max_bytes: int = None,
+    backup_count: int = None,
+    format_str: str = None
 ) -> logging.handlers.RotatingFileHandler:
     """Create a rotating file handler."""
     handler = logging.handlers.RotatingFileHandler(
         LOG_DIR / filename,
-        maxBytes=max_bytes,
-        backupCount=backup_count,
+        maxBytes=max_bytes if max_bytes is not None else LOG_MAX_BYTES,
+        backupCount=backup_count if backup_count is not None else LOG_BACKUP_COUNT,
         encoding="utf-8"
     )
     handler.setLevel(level)
-    handler.setFormatter(logging.Formatter(format_str, DATE_FORMAT))
+    handler.setFormatter(logging.Formatter(
+        format_str if format_str is not None else LOG_DETAILED_FORMAT,
+        LOG_DATE_FORMAT
+    ))
     handler.addFilter(RequestIdFilter())
     return handler
 
@@ -247,18 +255,18 @@ def get_file_handler(
 def get_json_file_handler(
     filename: str,
     level=logging.INFO,
-    max_bytes=10*1024*1024,
-    backup_count=5
+    max_bytes: int = None,
+    backup_count: int = None
 ) -> logging.handlers.RotatingFileHandler:
     """Create a rotating file handler for JSON logs."""
     handler = logging.handlers.RotatingFileHandler(
         LOG_DIR / filename,
-        maxBytes=max_bytes,
-        backupCount=backup_count,
+        maxBytes=max_bytes if max_bytes is not None else LOG_MAX_BYTES,
+        backupCount=backup_count if backup_count is not None else LOG_BACKUP_COUNT,
         encoding="utf-8"
     )
     handler.setLevel(level)
-    handler.setFormatter(logging.Formatter(JSON_FORMAT))
+    handler.setFormatter(logging.Formatter(LOG_JSON_FORMAT))
     return handler
 
 
@@ -266,7 +274,7 @@ def get_console_handler(level=logging.INFO) -> logging.StreamHandler:
     """Create a console handler."""
     handler = logging.StreamHandler()
     handler.setLevel(level)
-    handler.setFormatter(logging.Formatter(SIMPLE_FORMAT, DATE_FORMAT))
+    handler.setFormatter(logging.Formatter(LOG_SIMPLE_FORMAT, LOG_DATE_FORMAT))
     handler.addFilter(RequestIdFilter())
     return handler
 
@@ -304,7 +312,7 @@ def setup_logger(
     logger.addHandler(get_file_handler(log_file, level))
 
     # Error file handler (all errors aggregated)
-    logger.addHandler(get_file_handler("llm_errors.log", logging.ERROR))
+    logger.addHandler(get_file_handler(LOG_FILE_ERRORS, logging.ERROR))
 
     # Console handler
     if console:
@@ -322,7 +330,7 @@ def get_llm_logger() -> logging.Logger:
     """Get the main LLM logger."""
     global _llm_logger
     if _llm_logger is None:
-        _llm_logger = setup_logger("llm_utilities", "llm_requests.log")
+        _llm_logger = setup_logger("llm_utilities", LOG_FILE_REQUESTS)
     return _llm_logger
 
 
@@ -334,7 +342,7 @@ def get_metrics_logger() -> logging.Logger:
         _metrics_logger.setLevel(logging.INFO)
         if not _metrics_logger.handlers:
             _metrics_logger.addHandler(
-                get_json_file_handler("llm_metrics.log")
+                get_json_file_handler(LOG_FILE_METRICS)
             )
     return _metrics_logger
 
@@ -389,7 +397,7 @@ def log_llm_request(
         backend=backend,
         task=task,
         prompt_length=len(prompt),
-        prompt_preview=prompt[:200] + "..." if len(prompt) > 200 else prompt,
+        prompt_preview=prompt[:LOG_PREVIEW_LENGTH] + "..." if len(prompt) > LOG_PREVIEW_LENGTH else prompt,
         temperature=temperature,
         max_tokens=max_tokens,
         session_id=current_session_id.get(),
@@ -449,7 +457,7 @@ def log_llm_response(
         backend=backend,
         status=status,
         response_length=len(response) if response else 0,
-        response_preview=(response[:200] + "...") if response and len(response) > 200 else (response or ""),
+        response_preview=(response[:LOG_PREVIEW_LENGTH] + "...") if response and len(response) > LOG_PREVIEW_LENGTH else (response or ""),
         latency_ms=latency_ms,
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
