@@ -10,6 +10,14 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import json
 
+from config import MODEL_CONTEXT_LENGTHS
+from .config import (
+    CHUNKING_DEFAULT_OVERLAP,
+    CHUNKING_DEFAULT_RESERVE_FOR_PROMPT,
+    CHUNKING_DEFAULT_CONTEXT_LENGTH,
+    CHUNKING_CHARS_PER_TOKEN,
+)
+
 
 class ChunkType(str, Enum):
     """Type of content in a chunk."""
@@ -27,21 +35,6 @@ class ProcessingStatus(str, Enum):
     FAILED = "failed"
 
 
-# Model context lengths for chunk size calculation
-MODEL_CONTEXT_LENGTHS = {
-    "gemma3:4b": 8192,
-    "gemma3:12b": 8192,
-    "gemma3:27b": 8192,
-    "llama3:8b": 8192,
-    "llama3:70b": 8192,
-    "mistral:7b": 32768,
-    "mixtral:8x7b": 32768,
-}
-
-DEFAULT_CONTEXT_LENGTH = 8192
-DEFAULT_CHARS_PER_TOKEN = 4
-
-
 @dataclass
 class ChunkConfig:
     """
@@ -50,15 +43,15 @@ class ChunkConfig:
     model: str = "gemma3:4b"
     context_length: Optional[int] = None
     chunk_size: Optional[int] = None  # Max characters per chunk
-    chunk_overlap: int = 200  # Overlap between chunks in characters
-    reserve_for_prompt: int = 1000  # Tokens reserved for system prompt
-    chars_per_token: float = DEFAULT_CHARS_PER_TOKEN
+    chunk_overlap: int = CHUNKING_DEFAULT_OVERLAP  # Overlap between chunks in characters
+    reserve_for_prompt: int = CHUNKING_DEFAULT_RESERVE_FOR_PROMPT  # Tokens reserved for system prompt
+    chars_per_token: float = CHUNKING_CHARS_PER_TOKEN
 
     def __post_init__(self):
         """Calculate chunk_size if not provided."""
         if self.context_length is None:
             self.context_length = MODEL_CONTEXT_LENGTHS.get(
-                self.model, DEFAULT_CONTEXT_LENGTH
+                self.model, CHUNKING_DEFAULT_CONTEXT_LENGTH
             )
 
         if self.chunk_size is None:

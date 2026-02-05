@@ -13,12 +13,16 @@ from typing import Optional, List, Dict
 
 import aiohttp
 
-logger = logging.getLogger(__name__)
+from .config import (
+    VISION_MODEL,
+    VISION_OLLAMA_URL,
+    VISION_REQUEST_TIMEOUT,
+    VISION_MAX_CONCURRENT,
+    VISION_TEMPERATURE,
+    VISION_MAX_TOKENS,
+)
 
-# Configuration
-OLLAMA_URL = "http://localhost:11434"
-DEFAULT_VISION_MODEL = "gemma3:4b"
-REQUEST_TIMEOUT = 120
+logger = logging.getLogger(__name__)
 
 
 class VisionProcessor:
@@ -29,15 +33,17 @@ class VisionProcessor:
 
     def __init__(
         self,
-        model: str = DEFAULT_VISION_MODEL,
-        ollama_url: str = OLLAMA_URL,
-        max_concurrent: int = 3,
-        timeout: int = REQUEST_TIMEOUT
+        model: str = VISION_MODEL,
+        ollama_url: str = VISION_OLLAMA_URL,
+        max_concurrent: int = VISION_MAX_CONCURRENT,
+        timeout: int = VISION_REQUEST_TIMEOUT
     ):
         self.model = model
         self.ollama_url = ollama_url
         self.max_concurrent = max_concurrent
         self.timeout = timeout
+        self.temperature = VISION_TEMPERATURE
+        self.max_tokens = VISION_MAX_TOKENS
         self._session: Optional[aiohttp.ClientSession] = None
         self._semaphore = asyncio.Semaphore(max_concurrent)
 
@@ -133,8 +139,8 @@ Provide a structured summary."""
             "images": [image_b64],
             "stream": False,
             "options": {
-                "temperature": 0.3,
-                "num_predict": 500
+                "temperature": self.temperature,
+                "num_predict": self.max_tokens
             }
         }
 
@@ -204,7 +210,7 @@ Provide a structured summary."""
 # Convenience function
 async def get_image_description(
     image_path: str,
-    model: str = DEFAULT_VISION_MODEL,
+    model: str = VISION_MODEL,
     is_table: bool = False
 ) -> str:
     """

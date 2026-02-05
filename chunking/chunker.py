@@ -20,6 +20,11 @@ from .schemas import (
     ProcessingStatus
 )
 from .vision_processor import VisionProcessor
+from .config import (
+    CHUNKING_DEFAULT_OVERLAP,
+    CHUNKING_DEFAULT_PROCESS_IMAGES,
+)
+from config import DEFAULT_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -358,10 +363,10 @@ class Chunker:
 # Convenience function
 async def chunk_markdown(
     markdown_text: str,
-    model: str = "gemma3:4b",
+    model: str = DEFAULT_MODEL,
     chunk_size: Optional[int] = None,
-    chunk_overlap: int = 200,
-    process_images: bool = True
+    chunk_overlap: int = CHUNKING_DEFAULT_OVERLAP,
+    process_images: bool = CHUNKING_DEFAULT_PROCESS_IMAGES
 ) -> List[Chunk]:
     """
     Quick function to chunk markdown text.

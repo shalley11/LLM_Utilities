@@ -34,9 +34,21 @@ pip install -r requirements.txt
 
 ### Run the API Server
 
+**Using the startup script (recommended):**
+```bash
+./start.sh                    # Start with default settings
+./start.sh --reload           # Start with auto-reload for development
+./start.sh --port 9000        # Custom port
+./start.sh --workers 4        # Multiple workers for production
+./start.sh --help             # Show all options
+```
+
+**Using uvicorn directly:**
 ```bash
 uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
+
+The startup script automatically checks prerequisites (Redis, Ollama) and provides helpful status messages.
 
 ### Access Documentation
 
@@ -53,8 +65,10 @@ LLM_Utilities/
 ├── main.py                   # FastAPI application
 ├── schemas.py                # Core Pydantic models
 ├── requirements.txt          # Dependencies
+├── start.sh                  # Service startup script
 │
 ├── LLM/                      # LLM client module
+│   ├── config.py             # LLM client settings
 │   ├── llm_client.py         # Async LLM backend (Ollama/VLLM)
 │   └── prompts.py            # Core task prompts
 │
@@ -65,9 +79,10 @@ LLM_Utilities/
 │   └── schemas.py            # Pydantic models
 │
 ├── chunking/                 # Chunking module
-│   ├── config.py             # Chunking-specific settings
+│   ├── config.py             # Chunking and vision settings
 │   ├── service.py            # FastAPI endpoints
 │   ├── chunker.py            # Core chunking logic
+│   ├── vision_processor.py   # Vision model for images
 │   └── schemas.py            # Pydantic models
 │
 ├── summarization/            # Summarization module
@@ -260,6 +275,26 @@ REFINEMENT_MAX_ITERATIONS = 10        # Max refinements per session
 REFINEMENT_MAX_REGENERATIONS = 5      # Max regenerations per session
 ```
 
+**Chunking** (`chunking/config.py`):
+```python
+# Chunking settings
+CHUNKING_DEFAULT_OVERLAP = 200        # Overlap between chunks (characters)
+CHUNKING_DEFAULT_RESERVE_FOR_PROMPT = 1000  # Tokens reserved for prompt
+CHUNKING_DEFAULT_PROCESS_IMAGES = True  # Process images with Vision model
+CHUNKING_MIN_TEXT_LENGTH = 10         # Minimum text length for chunking
+CHUNKING_DEFAULT_CONTEXT_LENGTH = 8192  # Default context for unknown models
+CHUNKING_CHARS_PER_TOKEN = 4          # Characters per token estimate
+CHUNKING_MAX_BATCH_SIZE = 100         # Max batch size for processing
+
+# Vision processor settings
+VISION_MODEL = "gemma3:4b"            # Vision model for image processing
+VISION_OLLAMA_URL = "http://localhost:11434"  # Ollama URL for vision
+VISION_REQUEST_TIMEOUT = 120          # Request timeout (seconds)
+VISION_MAX_CONCURRENT = 3             # Max concurrent vision requests
+VISION_TEMPERATURE = 0.3              # Vision model temperature
+VISION_MAX_TOKENS = 500               # Max tokens for vision output
+```
+
 ### Environment Variables
 
 Configure via environment variables:
@@ -300,6 +335,23 @@ export REFINEMENT_KEY_PREFIX="refine"
 export REFINEMENT_DEFAULT_TTL="7200"
 export REFINEMENT_MAX_ITERATIONS="10"
 export REFINEMENT_MAX_REGENERATIONS="5"
+
+# Chunking
+export CHUNKING_DEFAULT_OVERLAP="200"
+export CHUNKING_DEFAULT_RESERVE_FOR_PROMPT="1000"
+export CHUNKING_DEFAULT_PROCESS_IMAGES="true"
+export CHUNKING_MIN_TEXT_LENGTH="10"
+export CHUNKING_DEFAULT_CONTEXT_LENGTH="8192"
+export CHUNKING_CHARS_PER_TOKEN="4"
+export CHUNKING_MAX_BATCH_SIZE="100"
+
+# Vision Processor
+export VISION_MODEL="gemma3:4b"
+export VISION_OLLAMA_URL="http://localhost:11434"
+export VISION_REQUEST_TIMEOUT="120"
+export VISION_MAX_CONCURRENT="3"
+export VISION_TEMPERATURE="0.3"
+export VISION_MAX_TOKENS="500"
 
 # Redis
 export REDIS_HOST="localhost"
