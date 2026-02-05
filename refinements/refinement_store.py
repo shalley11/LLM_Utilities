@@ -15,11 +15,13 @@ from dataclasses import dataclass, asdict
 
 from config import REDIS_HOST, REDIS_PORT, REDIS_DB, REFINEMENT_TTL
 from logs.logging_config import get_llm_logger
+from .config import (
+    REFINEMENT_KEY_PREFIX,
+    REFINEMENT_MAX_ITERATIONS,
+    REFINEMENT_MAX_REGENERATIONS,
+)
 
 logger = get_llm_logger()
-
-# Key prefix for refinement sessions
-REFINEMENT_KEY_PREFIX = "refine"
 
 
 @dataclass

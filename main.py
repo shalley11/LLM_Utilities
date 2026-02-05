@@ -74,6 +74,7 @@ from chunking import router as chunking_router
 from summarization import router as summarization_router
 from translation import router as translation_router
 from editortoolkit import router as editortoolkit_router
+from refinements import router as refinements_router
 
 # Initialize logging
 setup_llm_logging()
@@ -125,6 +126,7 @@ app.include_router(chunking_router)
 app.include_router(summarization_router)
 app.include_router(translation_router)
 app.include_router(editortoolkit_router)
+app.include_router(refinements_router)
 
 
 @app.on_event("startup")
