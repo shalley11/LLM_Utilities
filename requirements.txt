@@ -1,5 +1,9 @@
 # LLM_Utilities Dependencies
 
+# =========================
+# Core Dependencies
+# =========================
+
 # Async HTTP client for LLM API calls (Ollama/VLLM)
 aiohttp>=3.9.0
 
@@ -18,7 +22,10 @@ redis>=4.5.0
 # Accurate token counting (optional but recommended)
 tiktoken>=0.5.0
 
-# Text Extraction Dependencies
+# =========================
+# Text Extraction
+# =========================
+
 # PDF extraction using PyMuPDF
 PyMuPDF>=1.23.0
 
