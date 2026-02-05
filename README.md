@@ -339,27 +339,82 @@ All endpoints support `request_id` for tracking:
 
 ---
 
+## Guardrails
+
+The API includes built-in guardrails to prevent processing failures and ensure reliable operation.
+
+### Document Page Limit
+
+Documents exceeding **50 pages** are rejected during extraction.
+
+**Configuration** (`text_extractor/config.py`):
+```python
+EXTRACTOR_MAX_PAGES = 50  # Configurable via EXTRACTOR_MAX_PAGES env var
+```
+
+**Error Response:**
+```json
+{
+  "detail": {
+    "error": "document_too_long",
+    "message": "Document has 75 pages which exceeds the maximum allowed limit of 50 pages.",
+    "total_pages": 75,
+    "max_pages": 50,
+    "suggestion": "Please split the document into smaller parts (max 50 pages each) and process them separately."
+  }
+}
+```
+
+### Token Limit
+
+Text exceeding **80% of model context length** is rejected before processing.
+
+**Configuration** (in each module's `config.py`):
+```python
+# translation/config.py
+TRANSLATION_MAX_TOKEN_PERCENT = 80
+
+# editortoolkit/config.py
+EDITOR_MAX_TOKEN_PERCENT = 80
+
+# summarization/config.py
+SUMMARIZATION_MAX_TOKEN_PERCENT = 80
+```
+
+**Error Response:**
+```json
+{
+  "detail": {
+    "error": "token_limit_exceeded",
+    "message": "Text contains approximately 8,500 tokens which exceeds the maximum allowed limit of 6,553 tokens.",
+    "estimated_tokens": 8500,
+    "max_tokens": 6553,
+    "model": "gemma3:4b",
+    "model_context_length": 8192,
+    "usage_percent": 129.72,
+    "suggestion": "Please reduce the text length or split into smaller chunks for processing."
+  }
+}
+```
+
+### Guardrail Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `EXTRACTOR_MAX_PAGES` | 50 | Maximum pages for document extraction |
+| `TRANSLATION_MAX_TOKEN_PERCENT` | 80 | Max input tokens as % of context |
+| `EDITOR_MAX_TOKEN_PERCENT` | 80 | Max input tokens as % of context |
+| `SUMMARIZATION_MAX_TOKEN_PERCENT` | 80 | Max input tokens as % of context |
+
+---
+
 ## Error Handling
 
 | HTTP Code | Reason |
 |-----------|--------|
-| 400 | Bad request / Context length exceeded |
+| 400 | Bad request / Document too long / Token limit exceeded |
 | 404 | Request ID not found or expired |
 | 500 | Internal server error |
-
-**Context Length Error:**
-```json
-{
-  "detail": {
-    "error": "context_length_exceeded",
-    "message": "Input text is too long",
-    "model": "gemma3:4b",
-    "context_limit": 8192,
-    "estimated_tokens": 9500,
-    "usage_percent": 115.97
-  }
-}
-```
 
 ---
 
@@ -380,6 +435,7 @@ Log files in `logs/` directory:
 
 | Version | Changes |
 |---------|---------|
+| 3.1.0 | Guardrails: page limit (50), token limit validation across all services |
 | 3.0.0 | Modular architecture, translation, editor toolkit, module-specific configs |
 | 2.5.0 | Text extraction, chunking, summarization modules |
 | 2.2.0 | Async I/O with aiohttp, connection pooling |
