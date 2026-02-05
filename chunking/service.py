@@ -115,10 +115,16 @@ class ConfigResponse(BaseModel):
 async def extract_text_from_file(file_path: str) -> str:
     """Extract text from a file using text_extractor module."""
     from text_extractor.extractor import TextExtractor
+    from text_extractor.schemas import ExtractionRequest
 
     extractor = TextExtractor()
-    result = await extractor.extract(file_path)
-    return result.get("markdown", "") or result.get("text", "")
+    request = ExtractionRequest(
+        file_path=file_path,
+        include_images=True,
+        include_tables=True
+    )
+    result = extractor.extract(request)
+    return result.markdown_text or ""
 
 
 # =====================

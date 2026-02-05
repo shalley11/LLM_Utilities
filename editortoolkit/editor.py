@@ -5,7 +5,7 @@ import re
 import logging
 from typing import Optional, List, Tuple
 
-from LLM.llm_client import generate_text_with_logging
+from .llm_client import generate_text_with_logging
 from .config import EDITOR_DEFAULT_MODEL, EDITOR_TEMPERATURE
 from .prompts import (
     EDITOR_SYSTEM_PROMPT,

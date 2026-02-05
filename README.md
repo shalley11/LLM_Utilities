@@ -80,6 +80,7 @@ LLM_Utilities/
 │
 ├── chunking/                 # Chunking module
 │   ├── config.py             # Chunking and vision settings
+│   ├── llm_client.py         # Module-specific LLM client
 │   ├── service.py            # FastAPI endpoints
 │   ├── chunker.py            # Core chunking logic
 │   ├── vision_processor.py   # Vision model for images
@@ -87,6 +88,7 @@ LLM_Utilities/
 │
 ├── summarization/            # Summarization module
 │   ├── config.py             # Summarization-specific settings
+│   ├── llm_client.py         # Module-specific LLM client
 │   ├── service.py            # FastAPI endpoints
 │   ├── summarizer.py         # Hierarchical summarization logic
 │   ├── prompts.py            # Summary prompts
@@ -94,6 +96,7 @@ LLM_Utilities/
 │
 ├── translation/              # Translation module
 │   ├── config.py             # Translation-specific settings
+│   ├── llm_client.py         # Module-specific LLM client
 │   ├── service.py            # FastAPI endpoints
 │   ├── translator.py         # Core translation logic
 │   ├── prompts.py            # Translation prompts
@@ -101,6 +104,7 @@ LLM_Utilities/
 │
 ├── editortoolkit/            # Editor toolkit module
 │   ├── config.py             # Editor-specific settings
+│   ├── llm_client.py         # Module-specific LLM client
 │   ├── service.py            # FastAPI endpoints
 │   ├── editor.py             # Core editing logic
 │   ├── prompts.py            # Editing prompts
@@ -230,26 +234,47 @@ LLM_DEFAULT_MAX_TOKENS = 1024         # Max tokens to generate
 
 **Summarization** (`summarization/config.py`):
 ```python
+# LLM Backend (can use different endpoint than global)
+SUMMARIZATION_LLM_BACKEND = "ollama"  # ollama | vllm
+SUMMARIZATION_OLLAMA_URL = "http://localhost:11434"
+SUMMARIZATION_VLLM_URL = "http://localhost:8000"
 SUMMARIZATION_DEFAULT_MODEL = "gemma3:4b"
 SUMMARIZATION_DEFAULT_TYPE = "detailed"
 SUMMARIZATION_MAX_WORDS_PER_BATCH = 3000
 SUMMARIZATION_TEMPERATURE = 0.3
+SUMMARIZATION_MAX_TOKENS = 2048
+SUMMARIZATION_CONNECTION_TIMEOUT = 300
+SUMMARIZATION_CONNECTION_POOL_LIMIT = 50
 SUMMARIZATION_MAX_TOKEN_PERCENT = 80  # Token limit guardrail
 ```
 
 **Translation** (`translation/config.py`):
 ```python
+# LLM Backend (can use different endpoint than global)
+TRANSLATION_LLM_BACKEND = "ollama"    # ollama | vllm
+TRANSLATION_OLLAMA_URL = "http://localhost:11434"
+TRANSLATION_VLLM_URL = "http://localhost:8000"
 TRANSLATION_DEFAULT_MODEL = "gemma3:4b"
 TRANSLATION_MAX_BATCH_SIZE = 50
 TRANSLATION_TEMPERATURE = 0.3
+TRANSLATION_MAX_TOKENS = 2048
+TRANSLATION_CONNECTION_TIMEOUT = 300
+TRANSLATION_CONNECTION_POOL_LIMIT = 50
 TRANSLATION_MAX_TOKEN_PERCENT = 80    # Token limit guardrail
 ```
 
 **Editor Toolkit** (`editortoolkit/config.py`):
 ```python
+# LLM Backend (can use different endpoint than global)
+EDITOR_LLM_BACKEND = "ollama"         # ollama | vllm
+EDITOR_OLLAMA_URL = "http://localhost:11434"
+EDITOR_VLLM_URL = "http://localhost:8000"
 EDITOR_DEFAULT_MODEL = "gemma3:4b"
 EDITOR_SUPPORTED_TASKS = ["rephrase", "professional", "proofread", "concise"]
 EDITOR_TEMPERATURE = 0.3
+EDITOR_MAX_TOKENS = 2048
+EDITOR_CONNECTION_TIMEOUT = 300
+EDITOR_CONNECTION_POOL_LIMIT = 50
 EDITOR_MAX_TOKEN_PERCENT = 80         # Token limit guardrail
 ```
 
@@ -277,6 +302,14 @@ REFINEMENT_MAX_REGENERATIONS = 5      # Max regenerations per session
 
 **Chunking** (`chunking/config.py`):
 ```python
+# LLM Backend (can use different endpoint than global)
+CHUNKING_LLM_BACKEND = "ollama"       # ollama | vllm
+CHUNKING_OLLAMA_URL = "http://localhost:11434"
+CHUNKING_VLLM_URL = "http://localhost:8000"
+CHUNKING_DEFAULT_MODEL = "gemma3:4b"
+CHUNKING_CONNECTION_TIMEOUT = 300
+CHUNKING_CONNECTION_POOL_LIMIT = 50
+
 # Chunking settings
 CHUNKING_DEFAULT_OVERLAP = 200        # Overlap between chunks (characters)
 CHUNKING_DEFAULT_RESERVE_FOR_PROMPT = 1000  # Tokens reserved for prompt
@@ -313,10 +346,37 @@ export LLM_CONNECTION_POOL_LIMIT_PER_HOST="20"
 export LLM_DEFAULT_TEMPERATURE="0.3"
 export LLM_DEFAULT_MAX_TOKENS="1024"
 
-# Module-specific models
-export SUMMARIZATION_DEFAULT_MODEL="llama3:8b"
+# Module-specific LLM backends (each module can use different endpoints)
+# Translation
+export TRANSLATION_LLM_BACKEND="ollama"
+export TRANSLATION_OLLAMA_URL="http://localhost:11434"
+export TRANSLATION_VLLM_URL="http://localhost:8000"
 export TRANSLATION_DEFAULT_MODEL="gemma3:12b"
+export TRANSLATION_MAX_TOKENS="2048"
+export TRANSLATION_CONNECTION_TIMEOUT="300"
+
+# Summarization
+export SUMMARIZATION_LLM_BACKEND="ollama"
+export SUMMARIZATION_OLLAMA_URL="http://localhost:11434"
+export SUMMARIZATION_VLLM_URL="http://localhost:8000"
+export SUMMARIZATION_DEFAULT_MODEL="llama3:8b"
+export SUMMARIZATION_MAX_TOKENS="2048"
+export SUMMARIZATION_CONNECTION_TIMEOUT="300"
+
+# Editor Toolkit
+export EDITOR_LLM_BACKEND="ollama"
+export EDITOR_OLLAMA_URL="http://localhost:11434"
+export EDITOR_VLLM_URL="http://localhost:8000"
 export EDITOR_DEFAULT_MODEL="gemma3:4b"
+export EDITOR_MAX_TOKENS="2048"
+export EDITOR_CONNECTION_TIMEOUT="300"
+
+# Chunking
+export CHUNKING_LLM_BACKEND="ollama"
+export CHUNKING_OLLAMA_URL="http://localhost:11434"
+export CHUNKING_VLLM_URL="http://localhost:8000"
+export CHUNKING_DEFAULT_MODEL="gemma3:4b"
+export CHUNKING_CONNECTION_TIMEOUT="300"
 
 # Guardrails
 export EXTRACTOR_MAX_PAGES="50"
@@ -419,7 +479,7 @@ curl -X POST http://localhost:8000/api/docAI/v1/summarize/text \
   -d '{
     "text": "Your long document text here...",
     "summary_type": "brief",
-    "user_id": "user123"
+    "user_id": "user123
   }'
 ```
 

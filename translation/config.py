@@ -6,6 +6,19 @@ Module-specific settings for text translation.
 import os
 
 # =========================
+# LLM Backend Configuration
+# =========================
+
+# Backend type: ollama | vllm (falls back to global config)
+TRANSLATION_LLM_BACKEND = os.getenv("TRANSLATION_LLM_BACKEND", os.getenv("LLM_BACKEND", "ollama"))
+
+# Ollama URL for translation service
+TRANSLATION_OLLAMA_URL = os.getenv("TRANSLATION_OLLAMA_URL", os.getenv("OLLAMA_URL", "http://localhost:11434"))
+
+# VLLM URL for translation service
+TRANSLATION_VLLM_URL = os.getenv("TRANSLATION_VLLM_URL", os.getenv("VLLM_URL", "http://localhost:8000"))
+
+# =========================
 # Model Settings
 # =========================
 
@@ -29,6 +42,14 @@ TRANSLATION_MAX_BATCH_SIZE = int(os.getenv("TRANSLATION_MAX_BATCH_SIZE", "50"))
 # =========================
 
 TRANSLATION_TEMPERATURE = float(os.getenv("TRANSLATION_TEMPERATURE", "0.3"))
+TRANSLATION_MAX_TOKENS = int(os.getenv("TRANSLATION_MAX_TOKENS", "2048"))
+
+# =========================
+# Connection Settings
+# =========================
+
+TRANSLATION_CONNECTION_TIMEOUT = int(os.getenv("TRANSLATION_CONNECTION_TIMEOUT", "300"))
+TRANSLATION_CONNECTION_POOL_LIMIT = int(os.getenv("TRANSLATION_CONNECTION_POOL_LIMIT", "50"))
 
 # =========================
 # Token Limits

@@ -90,21 +90,30 @@ async def call_extraction_service(file_path: str) -> Dict:
         Dictionary with extracted markdown text and metadata
     """
     from text_extractor.extractor import TextExtractor
+    from text_extractor.schemas import ExtractionRequest
 
     logger.info(f"[PIPELINE] Calling extraction service | file={file_path}")
 
     extractor = TextExtractor()
-    result = await extractor.extract(file_path)
 
-    markdown = result.get("markdown", "") or result.get("text", "")
-    image_paths = result.get("image_paths", [])
+    # Create ExtractionRequest object
+    request = ExtractionRequest(
+        file_path=file_path,
+        include_images=True,
+        include_tables=True
+    )
+
+    result = extractor.extract(request)
+
+    markdown = result.markdown_text or ""
+    image_paths = result.image_paths or []
 
     logger.info(f"[PIPELINE] Extraction complete | chars={len(markdown)} | images={len(image_paths)}")
 
     return {
         "markdown": markdown,
         "image_paths": image_paths,
-        "metadata": result.get("metadata", {})
+        "metadata": result.metadata.to_dict() if result.metadata else {}
     }
 
 

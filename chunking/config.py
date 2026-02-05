@@ -6,6 +6,29 @@ Module-specific settings for text chunking.
 import os
 
 # =========================
+# LLM Backend Configuration
+# =========================
+
+# Backend type: ollama | vllm (falls back to global config)
+CHUNKING_LLM_BACKEND = os.getenv("CHUNKING_LLM_BACKEND", os.getenv("LLM_BACKEND", "ollama"))
+
+# Ollama URL for chunking service
+CHUNKING_OLLAMA_URL = os.getenv("CHUNKING_OLLAMA_URL", os.getenv("OLLAMA_URL", "http://localhost:11434"))
+
+# VLLM URL for chunking service
+CHUNKING_VLLM_URL = os.getenv("CHUNKING_VLLM_URL", os.getenv("VLLM_URL", "http://localhost:8000"))
+
+# Default model for chunking
+CHUNKING_DEFAULT_MODEL = os.getenv("CHUNKING_DEFAULT_MODEL", os.getenv("DEFAULT_MODEL", "gemma3:4b"))
+
+# =========================
+# Connection Settings
+# =========================
+
+CHUNKING_CONNECTION_TIMEOUT = int(os.getenv("CHUNKING_CONNECTION_TIMEOUT", "300"))
+CHUNKING_CONNECTION_POOL_LIMIT = int(os.getenv("CHUNKING_CONNECTION_POOL_LIMIT", "50"))
+
+# =========================
 # Chunking Settings
 # =========================
 

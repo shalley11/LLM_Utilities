@@ -14,18 +14,20 @@ import aiohttp
 from typing import List, Dict, Optional
 from dataclasses import dataclass, field
 
-from config import (
-    OLLAMA_URL,
-    get_model_context_length
-)
+from config import get_model_context_length
 from logs.logging_config import get_llm_logger
 from .config import (
+    SUMMARIZATION_LLM_BACKEND,
+    SUMMARIZATION_OLLAMA_URL,
+    SUMMARIZATION_VLLM_URL,
     SUMMARIZATION_DEFAULT_MODEL,
     SUMMARIZATION_MAX_WORDS_PER_BATCH,
     SUMMARIZATION_MAX_CHUNKS_PER_BATCH,
     SUMMARIZATION_INTERMEDIATE_WORDS,
     SUMMARIZATION_FINAL_WORDS,
     SUMMARIZATION_TEMPERATURE,
+    SUMMARIZATION_MAX_TOKENS,
+    SUMMARIZATION_CONNECTION_TIMEOUT,
 )
 from .prompts import (
     get_batch_summary_prompt,
@@ -41,7 +43,7 @@ DEFAULT_MAX_CHUNKS_PER_BATCH = SUMMARIZATION_MAX_CHUNKS_PER_BATCH
 DEFAULT_INTERMEDIATE_WORDS = SUMMARIZATION_INTERMEDIATE_WORDS
 DEFAULT_FINAL_WORDS = SUMMARIZATION_FINAL_WORDS
 DEFAULT_TEMPERATURE = SUMMARIZATION_TEMPERATURE
-DEFAULT_TIMEOUT = 300  # 5 minutes
+DEFAULT_TIMEOUT = SUMMARIZATION_CONNECTION_TIMEOUT
 MAX_REDUCE_LEVELS = 5
 REDUCE_GROUP_SIZE = 5
 
@@ -121,45 +123,59 @@ async def _call_llm_async(
     session: aiohttp.ClientSession,
     context: str = "unknown"
 ) -> str:
-    """Call LLM asynchronously."""
+    """Call LLM asynchronously using module-specific backend."""
     prompt_words = _count_words(prompt)
-    logger.debug(f"[ASYNC_LLM] {context} | model={config.model} | prompt_words={prompt_words}")
+    backend = SUMMARIZATION_LLM_BACKEND
+    logger.debug(f"[SUMMARIZATION_LLM] {context} | model={config.model} | backend={backend} | prompt_words={prompt_words}")
 
     start_time = time.time()
 
     try:
-        async with session.post(
-            f"{OLLAMA_URL}/api/generate",
-            json={
+        if backend == "vllm":
+            # VLLM API call
+            url = f"{SUMMARIZATION_VLLM_URL}/v1/chat/completions"
+            payload = {
+                "model": config.model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": config.temperature,
+                "max_tokens": SUMMARIZATION_MAX_TOKENS
+            }
+            async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=DEFAULT_TIMEOUT)) as response:
+                response.raise_for_status()
+                data = await response.json()
+                result = data["choices"][0]["message"]["content"].strip()
+        else:
+            # Ollama API call
+            url = f"{SUMMARIZATION_OLLAMA_URL}/api/generate"
+            payload = {
                 "model": config.model,
                 "prompt": prompt,
                 "stream": False,
                 "options": {
                     "temperature": config.temperature,
-                    "num_predict": 2048
+                    "num_predict": SUMMARIZATION_MAX_TOKENS
                 }
-            },
-            timeout=aiohttp.ClientTimeout(total=DEFAULT_TIMEOUT)
-        ) as response:
-            response.raise_for_status()
-            data = await response.json()
+            }
+            async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=DEFAULT_TIMEOUT)) as response:
+                response.raise_for_status()
+                data = await response.json()
+                result = data.get("response", "").strip()
 
-            elapsed = time.time() - start_time
-            result = data.get("response", "").strip()
-            result_words = _count_words(result)
+        elapsed = time.time() - start_time
+        result_words = _count_words(result)
 
-            logger.info(f"[ASYNC_LLM] {context} | SUCCESS | elapsed={elapsed:.2f}s | response_words={result_words}")
-            return result
+        logger.info(f"[SUMMARIZATION_LLM] {context} | SUCCESS | elapsed={elapsed:.2f}s | response_words={result_words}")
+        return result
 
     except asyncio.TimeoutError:
         elapsed = time.time() - start_time
-        logger.error(f"[ASYNC_LLM] {context} | TIMEOUT after {elapsed:.2f}s")
-        raise RuntimeError(f"LLM timeout after {elapsed:.2f}s")
+        logger.error(f"[SUMMARIZATION_LLM] {context} | TIMEOUT after {elapsed:.2f}s")
+        raise RuntimeError(f"Summarization LLM timeout after {elapsed:.2f}s")
 
     except aiohttp.ClientError as e:
         elapsed = time.time() - start_time
-        logger.error(f"[ASYNC_LLM] {context} | REQUEST_ERROR after {elapsed:.2f}s | error={str(e)}")
-        raise RuntimeError(f"LLM request failed: {e}")
+        logger.error(f"[SUMMARIZATION_LLM] {context} | REQUEST_ERROR after {elapsed:.2f}s | error={str(e)}")
+        raise RuntimeError(f"Summarization LLM request failed: {e}")
 
 
 async def _summarize_batch_async(
