@@ -21,6 +21,25 @@ Chunking Endpoints:
 - POST /api/docAI/v1/chunk/process: Create chunks from markdown text with vision processing
 - POST /api/docAI/v1/chunk/config: Calculate optimal chunk configuration
 - GET /api/docAI/v1/chunk/models: List supported models with context lengths
+
+Summarization Endpoints:
+- POST /api/docAI/v1/summarize/chunks: Hierarchical summarization of pre-chunked content
+- POST /api/docAI/v1/summarize/text: Summarize large text with automatic chunking
+- GET /api/docAI/v1/summarize/config: Get default summarization configuration
+- GET /api/docAI/v1/summarize/types: Get available summary types
+
+Translation Endpoints:
+- POST /api/docAI/v1/translate/text: Translate text to target language
+- POST /api/docAI/v1/translate/batch: Translate multiple texts
+- GET /api/docAI/v1/translate/languages: List supported languages
+- GET /api/docAI/v1/translate/config: Get translation configuration
+
+Editor Toolkit Endpoints:
+- POST /api/docAI/v1/editor/edit: Edit text (rephrase, professional, proofread, concise)
+- POST /api/docAI/v1/editor/refine: Refine previous edit with user feedback
+- POST /api/docAI/v1/editor/batch: Batch edit multiple texts
+- GET /api/docAI/v1/editor/tasks: List supported editing tasks
+- GET /api/docAI/v1/editor/config: Get editor configuration
 """
 
 from fastapi import FastAPI, HTTPException
@@ -52,6 +71,9 @@ from logs.logging_config import (
 from refinements.refinement_store import get_refinement_store, RefinementData
 from text_extractor import router as text_extractor_router
 from chunking import router as chunking_router
+from summarization import router as summarization_router
+from translation import router as translation_router
+from editortoolkit import router as editortoolkit_router
 
 # Initialize logging
 setup_llm_logging()
@@ -97,9 +119,12 @@ Requests exceeding model context limit (e.g., 8192 tokens for gemma3) are reject
     version="2.5.0"
 )
 
-# Include text extraction router
+# Include service routers
 app.include_router(text_extractor_router)
 app.include_router(chunking_router)
+app.include_router(summarization_router)
+app.include_router(translation_router)
+app.include_router(editortoolkit_router)
 
 
 @app.on_event("startup")
@@ -109,6 +134,9 @@ async def startup_event():
     logger.info(f"Default model: {DEFAULT_MODEL}")
     logger.info("Text Extraction: Enabled (PDF, DOCX, DOC, TXT)")
     logger.info("Chunking: Enabled (Page-wise with Vision processing)")
+    logger.info("Summarization: Enabled (Hierarchical)")
+    logger.info("Translation: Enabled")
+    logger.info("Editor Toolkit: Enabled (rephrase, professional, proofread, concise)")
     logger.info("=" * 50)
 
     # Initialize refinement store

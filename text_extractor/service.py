@@ -17,19 +17,23 @@ from pydantic import BaseModel, Field
 
 from .extractor import TextExtractor
 from .schemas import ExtractionRequest
+from .config import (
+    EXTRACTOR_UPLOAD_DIR,
+    EXTRACTOR_IMAGE_DIR,
+    EXTRACTOR_SUPPORTED_FILE_TYPES,
+    EXTRACTOR_DEFAULT_INCLUDE_TABLES,
+    EXTRACTOR_DEFAULT_INCLUDE_IMAGES,
+    EXTRACTOR_DEFAULT_INCLUDE_BLOCKS,
+)
 
 logger = logging.getLogger(__name__)
 
 # Create router
 router = APIRouter(prefix="/api/docAI/v1/extract", tags=["Text Extraction"])
 
-# Configuration
-UPLOAD_DIR = os.getenv("UPLOAD_DIR", "/tmp/text_extractor/uploads")
-IMAGE_DIR = os.getenv("IMAGE_DIR", "/tmp/text_extractor/images")
-
 # Ensure directories exist
-Path(UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
-Path(IMAGE_DIR).mkdir(parents=True, exist_ok=True)
+Path(EXTRACTOR_UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
+Path(EXTRACTOR_IMAGE_DIR).mkdir(parents=True, exist_ok=True)
 
 
 # =====================
@@ -48,6 +52,8 @@ class DocumentMetadataResponse(BaseModel):
     char_count: int
     extracted_at: str
     status: str
+    user_id: Optional[str] = None
+    user_name: Optional[str] = None
 
 
 class ExtractedBlockResponse(BaseModel):
@@ -62,6 +68,7 @@ class ExtractedBlockResponse(BaseModel):
 
 class ExtractionResponse(BaseModel):
     """Full extraction response."""
+    request_id: str
     metadata: DocumentMetadataResponse
     markdown_text: str
     image_paths: List[str]
@@ -70,12 +77,15 @@ class ExtractionResponse(BaseModel):
 
 class SimpleExtractionResponse(BaseModel):
     """Simplified response with just markdown."""
+    request_id: str
     document_id: str
     filename: str
     markdown_text: str
     image_paths: List[str]
     word_count: int
     status: str
+    user_id: Optional[str] = None
+    user_name: Optional[str] = None
 
 
 # =====================
@@ -85,7 +95,7 @@ class SimpleExtractionResponse(BaseModel):
 class TextExtractionService:
     """Service wrapper for text extraction."""
 
-    def __init__(self, upload_dir: str = UPLOAD_DIR, image_dir: str = IMAGE_DIR):
+    def __init__(self, upload_dir: str = EXTRACTOR_UPLOAD_DIR, image_dir: str = EXTRACTOR_IMAGE_DIR):
         self.upload_dir = Path(upload_dir)
         self.image_dir = Path(image_dir)
         self.extractor = TextExtractor()
@@ -156,9 +166,12 @@ def get_service() -> TextExtractionService:
 @router.post("/upload", response_model=ExtractionResponse)
 async def extract_from_upload(
     file: UploadFile = File(..., description="Document file (PDF, DOCX, DOC, TXT)"),
-    include_tables: bool = Form(True, description="Extract tables"),
-    include_images: bool = Form(True, description="Extract and save images"),
-    include_blocks: bool = Form(False, description="Include individual blocks in response")
+    request_id: Optional[str] = Form(None, description="Request ID (generated if not provided)"),
+    include_tables: bool = Form(EXTRACTOR_DEFAULT_INCLUDE_TABLES, description="Extract tables"),
+    include_images: bool = Form(EXTRACTOR_DEFAULT_INCLUDE_IMAGES, description="Extract and save images"),
+    include_blocks: bool = Form(EXTRACTOR_DEFAULT_INCLUDE_BLOCKS, description="Include individual blocks in response"),
+    user_id: Optional[str] = Form(None, description="User identifier for logging"),
+    user_name: Optional[str] = Form(None, description="User name for logging")
 ):
     """
     Extract text from uploaded document.
@@ -167,19 +180,33 @@ async def extract_from_upload(
     - Returns markdown formatted text
     - Saves embedded images to folder
     - Image paths included in markdown
+
+    **Form Parameters:**
+    - `file`: Document file (required)
+    - `request_id`: Request ID for tracking (generated if not provided)
+    - `include_tables`: Extract tables (default: true)
+    - `include_images`: Extract and save images (default: true)
+    - `include_blocks`: Include individual blocks in response (default: false)
+    - `user_id`: User identifier for logging (optional)
+    - `user_name`: User name for logging (optional)
     """
+    # Generate request_id if not provided (fresh request)
+    request_id = request_id or str(uuid.uuid4())
+
     # Validate file type
-    allowed_extensions = {'.pdf', '.docx', '.doc', '.txt'}
     file_ext = Path(file.filename).suffix.lower()
 
-    if file_ext not in allowed_extensions:
+    if file_ext not in EXTRACTOR_SUPPORTED_FILE_TYPES:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported file type: {file_ext}. Allowed: {allowed_extensions}"
+            detail=f"Unsupported file type: {file_ext}. Allowed: {EXTRACTOR_SUPPORTED_FILE_TYPES}"
         )
 
     service = get_service()
     document_id = str(uuid.uuid4())
+
+    # Log with user info
+    logger.info(f"[EXTRACT] START | request_id={request_id} | document_id={document_id} | filename={file.filename} | user_id={user_id} | user_name={user_name}")
 
     try:
         # Save uploaded file
@@ -193,6 +220,8 @@ async def extract_from_upload(
             include_images=include_images
         )
 
+        logger.info(f"[EXTRACT] END | request_id={request_id} | document_id={document_id} | blocks={result.metadata.total_blocks} | user_id={user_id}")
+
         # Build response
         metadata = DocumentMetadataResponse(
             document_id=result.metadata.document_id,
@@ -204,7 +233,9 @@ async def extract_from_upload(
             word_count=result.metadata.word_count,
             char_count=result.metadata.char_count,
             extracted_at=result.metadata.extracted_at,
-            status=result.metadata.status
+            status=result.metadata.status,
+            user_id=user_id,
+            user_name=user_name
         )
 
         blocks = None
@@ -222,6 +253,7 @@ async def extract_from_upload(
             ]
 
         return ExtractionResponse(
+            request_id=request_id,
             metadata=metadata,
             markdown_text=result.markdown_text,
             image_paths=result.image_paths,
@@ -229,24 +261,39 @@ async def extract_from_upload(
         )
 
     except FileNotFoundError as e:
+        logger.error(f"[EXTRACT] ERROR | request_id={request_id} | document_id={document_id} | user_id={user_id} | error=file_not_found")
         raise HTTPException(status_code=404, detail=str(e))
     except ValueError as e:
+        logger.error(f"[EXTRACT] ERROR | request_id={request_id} | document_id={document_id} | user_id={user_id} | error=value_error")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Extraction failed: {e}", exc_info=True)
+        logger.error(f"[EXTRACT] ERROR | request_id={request_id} | document_id={document_id} | user_id={user_id} | error={str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
 
 
 @router.post("/upload/simple", response_model=SimpleExtractionResponse)
 async def extract_simple(
     file: UploadFile = File(..., description="Document file (PDF, DOCX, DOC, TXT)"),
-    include_images: bool = Form(True, description="Extract and save images")
+    request_id: Optional[str] = Form(None, description="Request ID (generated if not provided)"),
+    include_images: bool = Form(EXTRACTOR_DEFAULT_INCLUDE_IMAGES, description="Extract and save images"),
+    user_id: Optional[str] = Form(None, description="User identifier for logging"),
+    user_name: Optional[str] = Form(None, description="User name for logging")
 ):
     """
     Simple extraction endpoint - returns just markdown text.
 
     Lighter response without individual blocks.
+
+    **Form Parameters:**
+    - `file`: Document file (required)
+    - `request_id`: Request ID for tracking (generated if not provided)
+    - `include_images`: Extract and save images (default: true)
+    - `user_id`: User identifier for logging (optional)
+    - `user_name`: User name for logging (optional)
     """
+    # Generate request_id if not provided (fresh request)
+    request_id = request_id or str(uuid.uuid4())
+
     allowed_extensions = {'.pdf', '.docx', '.doc', '.txt'}
     file_ext = Path(file.filename).suffix.lower()
 
@@ -259,6 +306,8 @@ async def extract_simple(
     service = get_service()
     document_id = str(uuid.uuid4())
 
+    logger.info(f"[EXTRACT_SIMPLE] START | request_id={request_id} | document_id={document_id} | filename={file.filename} | user_id={user_id} | user_name={user_name}")
+
     try:
         file_path = await service.save_upload(file, document_id)
 
@@ -269,47 +318,69 @@ async def extract_simple(
             include_images=include_images
         )
 
+        logger.info(f"[EXTRACT_SIMPLE] END | request_id={request_id} | document_id={document_id} | words={result.metadata.word_count} | user_id={user_id}")
+
         return SimpleExtractionResponse(
+            request_id=request_id,
             document_id=result.metadata.document_id,
             filename=result.metadata.filename,
             markdown_text=result.markdown_text,
             image_paths=result.image_paths,
             word_count=result.metadata.word_count,
-            status="completed"
+            status="completed",
+            user_id=user_id,
+            user_name=user_name
         )
 
     except Exception as e:
-        logger.error(f"Extraction failed: {e}", exc_info=True)
+        logger.error(f"[EXTRACT_SIMPLE] ERROR | request_id={request_id} | document_id={document_id} | user_id={user_id} | error={str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
 
 
 @router.post("/path", response_model=ExtractionResponse)
 async def extract_from_path(
     file_path: str = Form(..., description="Path to document file"),
+    request_id: Optional[str] = Form(None, description="Request ID (generated if not provided)"),
     document_id: Optional[str] = Form(None, description="Custom document ID"),
-    include_tables: bool = Form(True),
-    include_images: bool = Form(True),
-    include_blocks: bool = Form(False)
+    include_tables: bool = Form(EXTRACTOR_DEFAULT_INCLUDE_TABLES),
+    include_images: bool = Form(EXTRACTOR_DEFAULT_INCLUDE_IMAGES),
+    include_blocks: bool = Form(EXTRACTOR_DEFAULT_INCLUDE_BLOCKS),
+    user_id: Optional[str] = Form(None, description="User identifier for logging"),
+    user_name: Optional[str] = Form(None, description="User name for logging")
 ):
     """
     Extract text from file path on server.
 
     Use this when file is already on the server.
+
+    **Form Parameters:**
+    - `file_path`: Path to document file (required)
+    - `request_id`: Request ID for tracking (generated if not provided)
+    - `document_id`: Custom document ID (optional)
+    - `include_tables`: Extract tables (default: true)
+    - `include_images`: Extract and save images (default: true)
+    - `include_blocks`: Include individual blocks (default: false)
+    - `user_id`: User identifier for logging (optional)
+    - `user_name`: User name for logging (optional)
     """
+    # Generate request_id if not provided (fresh request)
+    request_id = request_id or str(uuid.uuid4())
+
     path = Path(file_path)
 
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
 
-    allowed_extensions = {'.pdf', '.docx', '.doc', '.txt'}
-    if path.suffix.lower() not in allowed_extensions:
+    if path.suffix.lower() not in EXTRACTOR_SUPPORTED_FILE_TYPES:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported file type: {path.suffix}"
+            detail=f"Unsupported file type: {path.suffix}. Allowed: {EXTRACTOR_SUPPORTED_FILE_TYPES}"
         )
 
     service = get_service()
     doc_id = document_id or str(uuid.uuid4())
+
+    logger.info(f"[EXTRACT_PATH] START | request_id={request_id} | document_id={doc_id} | path={file_path} | user_id={user_id} | user_name={user_name}")
 
     try:
         result = service.extract_from_path(
@@ -318,6 +389,8 @@ async def extract_from_path(
             include_tables=include_tables,
             include_images=include_images
         )
+
+        logger.info(f"[EXTRACT_PATH] END | request_id={request_id} | document_id={doc_id} | blocks={result.metadata.total_blocks} | user_id={user_id}")
 
         metadata = DocumentMetadataResponse(
             document_id=result.metadata.document_id,
@@ -329,7 +402,9 @@ async def extract_from_path(
             word_count=result.metadata.word_count,
             char_count=result.metadata.char_count,
             extracted_at=result.metadata.extracted_at,
-            status=result.metadata.status
+            status=result.metadata.status,
+            user_id=user_id,
+            user_name=user_name
         )
 
         blocks = None
@@ -347,6 +422,7 @@ async def extract_from_path(
             ]
 
         return ExtractionResponse(
+            request_id=request_id,
             metadata=metadata,
             markdown_text=result.markdown_text,
             image_paths=result.image_paths,
@@ -354,7 +430,7 @@ async def extract_from_path(
         )
 
     except Exception as e:
-        logger.error(f"Extraction failed: {e}", exc_info=True)
+        logger.error(f"[EXTRACT_PATH] ERROR | request_id={request_id} | document_id={doc_id} | user_id={user_id} | error={str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Extraction failed: {str(e)}")
 
 
@@ -365,6 +441,7 @@ async def cleanup_document(document_id: str):
     """
     service = get_service()
     service.cleanup(document_id)
+    logger.info(f"[CLEANUP] document_id={document_id}")
     return {"status": "cleaned", "document_id": document_id}
 
 

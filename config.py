@@ -1,3 +1,9 @@
+"""
+Global Configuration
+
+Shared settings used across all modules.
+Module-specific settings are in each module's config.py file.
+"""
 import os
 from functools import lru_cache
 
@@ -10,14 +16,15 @@ except ImportError:
     TIKTOKEN_AVAILABLE = False
     _encoder = None
 
-#LLM_BACKEND = os.getenv("LLM_BACKEND", "ollama")
-LLM_BACKEND = "ollama"
-# ollama | vllm
+# =========================
+# LLM Backend Configuration
+# =========================
 
+LLM_BACKEND = os.getenv("LLM_BACKEND", "ollama")  # ollama | vllm
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 VLLM_URL = os.getenv("VLLM_URL", "http://localhost:8000")
-
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gemma3:4b")
+LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.3"))
 
 # =========================
 # Model Context Lengths
@@ -44,6 +51,10 @@ REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_DB = int(os.getenv("REDIS_DB", "0"))
 REFINEMENT_TTL = int(os.getenv("REFINEMENT_TTL", "7200"))  # 2 hours TTL for session expiry
 
+
+# =========================
+# Utility Functions
+# =========================
 
 @lru_cache(maxsize=32)
 def get_model_context_length(model: str) -> int:

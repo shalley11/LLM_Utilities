@@ -17,3 +17,13 @@ redis>=4.5.0
 
 # Accurate token counting (optional but recommended)
 tiktoken>=0.5.0
+
+# Text Extraction Dependencies
+# PDF extraction using PyMuPDF
+PyMuPDF>=1.23.0
+
+# DOCX extraction
+python-docx>=1.0.0
+
+# File upload handling
+python-multipart>=0.0.6
