@@ -26,9 +26,7 @@ from config import (
 from .config import (
     LLM_CONNECTION_TIMEOUT,
     LLM_CONNECTION_POOL_LIMIT,
-    LLM_CONNECTION_POOL_LIMIT_PER_HOST,
-    LLM_DEFAULT_TEMPERATURE,
-    LLM_DEFAULT_MAX_TOKENS,
+    LLM_CONNECTION_POOL_LIMIT_PER_HOST
 )
 from logs.logging_config import (
     get_llm_logger,
