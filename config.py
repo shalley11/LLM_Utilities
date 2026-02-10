@@ -27,7 +27,7 @@ except ImportError:
 # LLM Backend Configuration
 # =========================
 
-LLM_BACKEND = os.getenv("LLM_BACKEND", "ollama")  # ollama | vllm
+LLM_BACKEND = os.getenv("LLM_BACKEND", "vllm")  # ollama | vllm
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 VLLM_URL = os.getenv("VLLM_URL", "http://localhost:8000")
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gemma3:4b")
