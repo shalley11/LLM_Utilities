@@ -13,6 +13,7 @@ IMPORTANT RULES:
 - Do NOT add assumptions, interpretations, or external knowledge
 - If information is missing or unclear, state it explicitly
 - Preserve factual accuracy (numbers, dates, metrics, names)
+- PRESERVE all image placeholders exactly as they appear (e.g. [IMAGE_1], [IMAGE_2]). Include them inline in the summary where the image is relevant.
 
 CONTENT:
 {content}
@@ -22,6 +23,7 @@ Generate a concise summary of approximately {word_count} words that:
 - Captures the main ideas and key findings in this part
 - Preserves important facts, figures, and results
 - Maintains enough context to be merged with summaries from other parts
+- Keeps all [IMAGE_X] placeholders in the output at contextually appropriate positions
 
 OUTPUT:
 Summary:
@@ -105,6 +107,7 @@ You are combining summaries from different sections of a document into one coher
 IMPORTANT RULES:
 - Use ONLY the provided summaries
 - Do NOT introduce new information or assumptions
+- PRESERVE all image placeholders exactly as they appear (e.g. [IMAGE_1], [IMAGE_2]). Include them inline where the image is relevant.
 
 Section Summaries:
 {combined_content}
@@ -126,6 +129,7 @@ IMPORTANT RULES:
 - Use ONLY the information present in the content
 - Do NOT add assumptions or external knowledge
 - Preserve factual accuracy
+- PRESERVE all image placeholders exactly as they appear (e.g. [IMAGE_1], [IMAGE_2]). Include them inline in the summary where the image is relevant.
 
 Content:
 {content}

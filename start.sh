@@ -121,6 +121,16 @@ check_prerequisites() {
         print_warning "  Start Ollama with: ollama serve"
     fi
 
+    # Check offline docs assets
+    STATIC_DIR="$(dirname "$0")/static"
+    if [ -d "$STATIC_DIR/swagger-ui" ] && [ -f "$STATIC_DIR/swagger-ui/swagger-ui-bundle.js" ]; then
+        print_success "Offline docs: assets found"
+    else
+        print_warning "Offline docs: static assets not found"
+        print_warning "  Run ./setup_docs.sh to download Swagger UI/ReDoc for offline use"
+        print_warning "  /docs and /redoc won't load without internet until assets are downloaded"
+    fi
+
     echo ""
 }
 

@@ -42,7 +42,11 @@ Editor Toolkit Endpoints:
 - GET /api/docAI/v1/editor/config: Get editor configuration
 """
 
+from pathlib import Path
 from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
+from fastapi.responses import JSONResponse
 from schemas import (
     TextTaskRequest,
     TextTaskResponse,
@@ -117,8 +121,49 @@ Supports **Summary, Translation, Rephrase, and Deduplication** tasks with iterat
 
 Requests exceeding model context limit (e.g., 8192 tokens for gemma3) are rejected with HTTP 400 to prevent truncation.
 """,
-    version="2.5.0"
+    version="2.5.0",
+    docs_url=None,
+    redoc_url=None,
 )
+
+# Mount static files for offline docs (Swagger UI, ReDoc)
+_static_dir = Path(__file__).parent / "static"
+if _static_dir.is_dir():
+    app.mount("/static", StaticFiles(directory=str(_static_dir)), name="static")
+
+
+@app.get("/docs", include_in_schema=False)
+async def custom_swagger_ui():
+    """Serve Swagger UI using local static files (works offline)."""
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=app.title + " - Swagger UI",
+        swagger_js_url="/static/swagger-ui/swagger-ui-bundle.js",
+        swagger_css_url="/static/swagger-ui/swagger-ui.css",
+        swagger_favicon_url="/static/favicon.png",
+    )
+
+
+@app.get("/redoc", include_in_schema=False)
+async def custom_redoc():
+    """Serve ReDoc using local static files (works offline)."""
+    return get_redoc_html(
+        openapi_url=app.openapi_url,
+        title=app.title + " - ReDoc",
+        redoc_js_url="/static/redoc/redoc.standalone.js",
+        redoc_favicon_url="/static/favicon.png",
+        with_google_fonts=False,
+    )
+
+
+@app.get("/openapi-spec/download", include_in_schema=False)
+async def download_openapi_spec():
+    """Download the OpenAPI specification as a JSON file."""
+    return JSONResponse(
+        content=app.openapi(),
+        headers={"Content-Disposition": "attachment; filename=openapi.json"},
+    )
+
 
 # Include service routers
 app.include_router(text_extractor_router)

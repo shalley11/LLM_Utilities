@@ -48,6 +48,7 @@ class SummarizationResponse(BaseModel):
     batches: int = Field(..., description="Number of batches used")
     levels: int = Field(..., description="Reduction levels used")
     model: str = Field(..., description="Model used")
+    images: Optional[Dict[str, str]] = Field(None, description="Image placeholder → file path mapping (e.g. {\"IMAGE_1\": \"/path/to/img.png\"})")
     user_id: Optional[str] = Field(None, description="User identifier if provided")
     user_name: Optional[str] = Field(None, description="User name if provided")
 

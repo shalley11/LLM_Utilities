@@ -9,6 +9,7 @@ Supports two input types:
 1. String data (JSON body) - calls chunking service directly
 2. File upload (form data) - calls extraction service, then chunking service
 """
+import re
 import uuid
 import os
 import tempfile
@@ -72,6 +73,111 @@ def validate_token_count(text: str, model: str) -> None:
         )
 
 
+def _extract_keywords(text: str, min_len: int = 5) -> set:
+    """Extract significant keywords from text for fuzzy matching."""
+    words = re.findall(r'[a-zA-Z]+', text.lower())
+    # Filter short words and common stop words
+    stop = {'about', 'above', 'after', 'again', 'being', 'below', 'between',
+            'could', 'doing', 'during', 'every', 'further', 'having', 'image',
+            'includes', 'including', 'likely', 'other', 'should', 'their',
+            'there', 'these', 'those', 'through', 'under', 'until', 'which',
+            'while', 'would', 'could', 'where', 'within', 'without', 'content',
+            'appears', 'present', 'provides', 'features', 'elements', 'based',
+            'shown', 'display', 'visible', 'possibly', 'suggests', 'related'}
+    return {w for w in words if len(w) >= min_len and w not in stop}
+
+
+def _find_best_sentence(summary_sentences: List[str], keywords: set) -> int:
+    """Find the sentence index with the most keyword overlap."""
+    best_idx = -1
+    best_score = 0
+
+    for i, sentence in enumerate(summary_sentences):
+        sentence_words = set(re.findall(r'[a-zA-Z]+', sentence.lower()))
+        overlap = len(keywords & sentence_words)
+        if overlap > best_score:
+            best_score = overlap
+            best_idx = i
+
+    # Require at least 2 keyword matches to avoid false positives
+    return best_idx if best_score >= 2 else -1
+
+
+def inject_image_placeholders(
+    summary: str,
+    image_map: Dict[str, str],
+    placeholder_descs: Optional[Dict[str, str]] = None
+) -> str:
+    """
+    Ensure all [IMAGE_X] placeholders appear inline in the summary.
+
+    Strategy:
+    1. Normalize any LLM-mangled variants (parentheses, bare names)
+    2. For still-missing placeholders, fuzzy-match their vision description
+       against summary sentences and insert inline
+    3. Append any truly unmatched placeholders at the end
+    """
+    if not image_map:
+        return summary
+
+    placeholder_descs = placeholder_descs or {}
+
+    # Step 1: Normalize LLM variants to canonical [IMAGE_X] format
+    for placeholder in image_map:
+        summary = summary.replace(f"({placeholder})", f"[{placeholder}]")
+        summary = re.sub(
+            rf'(?<!\[)\b{re.escape(placeholder)}\b(?!\])',
+            f"[{placeholder}]",
+            summary
+        )
+
+    # Step 2: Find placeholders still missing after normalization
+    missing = [
+        p for p in image_map
+        if f"[{p}]" not in summary
+    ]
+
+    if not missing:
+        return summary
+
+    missing.sort(key=lambda p: int(re.search(r'\d+', p).group()) if re.search(r'\d+', p) else 0)
+
+    # Step 3: Try to insert missing placeholders inline via fuzzy matching
+    # Split summary into sentences for matching
+    sentences = re.split(r'(?<=[.!?])\s+', summary)
+    still_missing = []
+
+    for placeholder in missing:
+        desc = placeholder_descs.get(placeholder, "")
+        if not desc:
+            still_missing.append(placeholder)
+            continue
+
+        keywords = _extract_keywords(desc)
+        if len(keywords) < 2:
+            still_missing.append(placeholder)
+            continue
+
+        best_idx = _find_best_sentence(sentences, keywords)
+        if best_idx >= 0:
+            # Insert placeholder at the end of the matching sentence
+            sentences[best_idx] = sentences[best_idx].rstrip() + f" [{placeholder}]"
+            logger.info(f"[POST_PROCESS] Inserted [{placeholder}] inline (matched {len(keywords)} keywords)")
+        else:
+            still_missing.append(placeholder)
+
+    # Rebuild summary from modified sentences
+    summary = " ".join(sentences)
+
+    # Step 4: Append any truly unmatched placeholders at the end
+    if still_missing:
+        placeholder_lines = "\n".join(f"[{p}]" for p in still_missing)
+        summary += f"\n\nReferenced Images:\n{placeholder_lines}"
+        logger.info(f"[POST_PROCESS] Appended {len(still_missing)} unmatched image placeholders")
+
+    return summary
+
+
 router = APIRouter(prefix="/api/docAI/v1/summarize", tags=["Summarization"])
 
 
@@ -125,7 +231,7 @@ async def call_chunking_service(
     chunk_overlap: int = 200,
     image_paths: Optional[List[str]] = None,
     process_images: bool = False
-) -> List[Dict]:
+) -> tuple:
     """
     Call the chunking service to split text into chunks.
 
@@ -139,7 +245,9 @@ async def call_chunking_service(
         process_images: Whether to process images with vision model
 
     Returns:
-        List of chunk dictionaries with 'text' field
+        Tuple of (chunk_list, image_map, placeholder_descs) where:
+        - image_map: placeholder → path (e.g. {"IMAGE_1": "/path/to/img.png"})
+        - placeholder_descs: placeholder → description text
     """
     from chunking.schemas import ChunkConfig, ChunkingRequest
     from chunking.chunker import Chunker
@@ -157,7 +265,7 @@ async def call_chunking_service(
     chunker = Chunker(config=config)
 
     try:
-        chunks, image_descriptions = await chunker.chunk(
+        chunks, image_descriptions, image_map = await chunker.chunk(
             markdown_text=text,
             document_id=document_id,
             image_paths=image_paths,
@@ -174,9 +282,14 @@ async def call_chunking_service(
             for c in chunks
         ]
 
-        logger.info(f"[PIPELINE] Chunking complete | chunks={len(chunk_list)} | images_processed={len(image_descriptions)}")
+        # Build placeholder → description mapping for post-processing
+        placeholder_descs = {}
+        for placeholder, path in image_map.items():
+            placeholder_descs[placeholder] = image_descriptions.get(path, "")
 
-        return chunk_list
+        logger.info(f"[PIPELINE] Chunking complete | chunks={len(chunk_list)} | images_processed={len(image_descriptions)} | images_mapped={len(image_map)}")
+
+        return chunk_list, image_map, placeholder_descs
 
     finally:
         await chunker.close()
@@ -228,7 +341,7 @@ async def summarize_text_endpoint(request: TextSummarizationRequest):
         try:
 
             # Step 1: Call Chunking Service
-            chunks = await call_chunking_service(
+            chunks, _, _ = await call_chunking_service(
                 text=request.text,
                 document_id=document_id,
                 model=model,
@@ -278,7 +391,7 @@ async def summarize_file_endpoint(
     request_id: Optional[str] = Form(None, description="Request ID (generated if not provided)"),
     summary_type: Literal["brief", "bullets", "detailed", "executive"] = Form(SUMMARIZATION_DEFAULT_TYPE, description="Type of summary"),
     model: Optional[str] = Form(None, description="Model to use (optional)"),
-    process_images: bool = Form(False, description="Process images with Vision model"),
+    process_images: bool = Form(True, description="Process images with Vision model"),
     user_id: Optional[str] = Form(None, description="User identifier for logging"),
     user_name: Optional[str] = Form(None, description="User name for logging")
 ):
@@ -361,7 +474,7 @@ async def summarize_file_endpoint(
                 )
 
             # Step 2: Call Chunking Service
-            chunks = await call_chunking_service(
+            chunks, image_map, placeholder_descs = await call_chunking_service(
                 text=markdown,
                 document_id=document_id,
                 model=model_to_use,
@@ -382,11 +495,14 @@ async def summarize_file_endpoint(
                 config=config
             )
 
-            logger.info(f"[SUMMARIZE_FILE] END | method={result['method']} | batches={result['batches']} | user_id={user_id}")
+            # Post-process: insert image placeholders inline via fuzzy matching
+            final_summary = inject_image_placeholders(result["summary"], image_map, placeholder_descs)
+
+            logger.info(f"[SUMMARIZE_FILE] END | method={result['method']} | batches={result['batches']} | images={len(image_map)} | user_id={user_id}")
 
             return SummarizationResponse(
                 request_id=request_id,
-                summary=result["summary"],
+                summary=final_summary,
                 summary_type=summary_type,
                 method=result["method"],
                 total_chunks=result["total_chunks"],
@@ -394,6 +510,7 @@ async def summarize_file_endpoint(
                 batches=result["batches"],
                 levels=result["levels"],
                 model=result["model"],
+                images=image_map if image_map else None,
                 user_id=user_id,
                 user_name=user_name
             )

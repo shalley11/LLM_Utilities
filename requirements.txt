@@ -7,6 +7,9 @@
 # Async HTTP client for LLM API calls (Ollama/VLLM)
 aiohttp>=3.9.0
 
+# Environment variable management (.env file support)
+python-dotenv>=1.0.0
+
 # Data validation and serialization
 pydantic>=2.0.0
 

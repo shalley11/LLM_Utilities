@@ -53,10 +53,21 @@ SUMMARIZATION_TEMPERATURE = float(os.getenv("SUMMARIZATION_TEMPERATURE", "0.3"))
 SUMMARIZATION_MAX_TOKENS = int(os.getenv("SUMMARIZATION_MAX_TOKENS", "2048"))
 
 # =========================
+# Concurrency Settings
+# =========================
+
+# Max concurrent LLM calls during MAP phase (batch summarization)
+# Keep low on CPU-only systems (1-2); increase on GPU systems (3-5)
+SUMMARIZATION_MAP_CONCURRENT = int(os.getenv("SUMMARIZATION_MAP_CONCURRENT", "2"))
+
+# Max concurrent LLM calls during REDUCE phase (combining summaries)
+SUMMARIZATION_REDUCE_CONCURRENT = int(os.getenv("SUMMARIZATION_REDUCE_CONCURRENT", "2"))
+
+# =========================
 # Connection Settings
 # =========================
 
-SUMMARIZATION_CONNECTION_TIMEOUT = int(os.getenv("SUMMARIZATION_CONNECTION_TIMEOUT", "300"))
+SUMMARIZATION_CONNECTION_TIMEOUT = int(os.getenv("SUMMARIZATION_CONNECTION_TIMEOUT", "1800"))
 SUMMARIZATION_CONNECTION_POOL_LIMIT = int(os.getenv("SUMMARIZATION_CONNECTION_POOL_LIMIT", "50"))
 
 # =========================

@@ -2,9 +2,10 @@
 Vision Processor
 
 Calls Vision Gemma3 model to get descriptions for images and tables.
-Supports Ollama backend.
+Supports Ollama and VLLM backends.
 """
 
+import re
 import base64
 import logging
 import asyncio
@@ -14,8 +15,10 @@ from typing import Optional, List, Dict
 import aiohttp
 
 from .config import (
+    VISION_LLM_BACKEND,
     VISION_MODEL,
     VISION_OLLAMA_URL,
+    VISION_VLLM_URL,
     VISION_REQUEST_TIMEOUT,
     VISION_MAX_CONCURRENT,
     VISION_TEMPERATURE,
@@ -27,19 +30,23 @@ logger = logging.getLogger(__name__)
 
 class VisionProcessor:
     """
-    Processes images using Vision Gemma3 model via Ollama.
+    Processes images using Vision model via Ollama or VLLM.
     Returns text descriptions for images and tables.
     """
 
     def __init__(
         self,
         model: str = VISION_MODEL,
+        backend: str = VISION_LLM_BACKEND,
         ollama_url: str = VISION_OLLAMA_URL,
+        vllm_url: str = VISION_VLLM_URL,
         max_concurrent: int = VISION_MAX_CONCURRENT,
         timeout: int = VISION_REQUEST_TIMEOUT
     ):
         self.model = model
+        self.backend = backend
         self.ollama_url = ollama_url
+        self.vllm_url = vllm_url
         self.max_concurrent = max_concurrent
         self.timeout = timeout
         self.temperature = VISION_TEMPERATURE
@@ -48,10 +55,9 @@ class VisionProcessor:
         self._semaphore = asyncio.Semaphore(max_concurrent)
 
     async def _get_session(self) -> aiohttp.ClientSession:
-        """Get or create aiohttp session."""
+        """Get or create aiohttp session (no global timeout — each request has its own)."""
         if self._session is None or self._session.closed:
-            timeout = aiohttp.ClientTimeout(total=self.timeout)
-            self._session = aiohttp.ClientSession(timeout=timeout)
+            self._session = aiohttp.ClientSession()
         return self._session
 
     async def close(self):
@@ -94,6 +100,40 @@ Provide a clear, concise description."""
 
 Provide a structured summary."""
 
+    def _clean_vision_output(self, text: str, max_chars: int = 1000) -> str:
+        """
+        Clean vision model output: detect repetition loops and truncate.
+
+        Small models sometimes repeat the same tokens endlessly.
+        This detects repeating patterns and cuts them off.
+        """
+        if not text or len(text) <= max_chars:
+            return text
+
+        # Detect repeating patterns (4-50 char sequences repeated 3+ times)
+        match = re.search(r'(.{4,50}?)\1{2,}', text)
+        if match:
+            # Cut at where repetition starts, keep one instance
+            repeat_start = match.start()
+            one_instance = match.group(1).strip()
+            cleaned = text[:repeat_start].strip()
+            if one_instance and len(one_instance) > 4:
+                cleaned += f" {one_instance}"
+            logger.warning(f"Vision output had repetition loop, truncated at char {repeat_start}")
+            return cleaned[:max_chars]
+
+        # No repetition but still too long — hard truncate at sentence boundary
+        truncated = text[:max_chars]
+        last_sentence = max(
+            truncated.rfind('. '),
+            truncated.rfind('.\n'),
+            truncated.rfind('? '),
+            truncated.rfind('! ')
+        )
+        if last_sentence > max_chars // 2:
+            return truncated[:last_sentence + 1]
+        return truncated
+
     async def process_image(
         self,
         image_path: str,
@@ -124,9 +164,13 @@ Provide a structured summary."""
         else:
             prompt = self._get_image_prompt()
 
-        # Call Ollama vision API
+        # Call vision API based on backend
         async with self._semaphore:
-            return await self._call_ollama_vision(image_b64, prompt)
+            if self.backend == "vllm":
+                raw = await self._call_vllm_vision(image_b64, prompt)
+            else:
+                raw = await self._call_ollama_vision(image_b64, prompt)
+            return self._clean_vision_output(raw)
 
     async def _call_ollama_vision(self, image_b64: str, prompt: str) -> str:
         """Call Ollama API with image."""
@@ -145,7 +189,8 @@ Provide a structured summary."""
         }
 
         try:
-            async with session.post(url, json=payload) as response:
+            req_timeout = aiohttp.ClientTimeout(total=self.timeout)
+            async with session.post(url, json=payload, timeout=req_timeout) as response:
                 if response.status != 200:
                     error_text = await response.text()
                     logger.error(f"Ollama error: {response.status} - {error_text}")
@@ -155,10 +200,56 @@ Provide a structured summary."""
                 return result.get("response", "").strip()
 
         except asyncio.TimeoutError:
-            logger.error("Ollama request timed out")
+            logger.error(f"Ollama request timed out after {self.timeout}s")
             return "[Vision processing timed out]"
         except aiohttp.ClientError as e:
             logger.error(f"Ollama connection error: {e}")
+            return f"[Vision service unavailable: {str(e)}]"
+        except Exception as e:
+            logger.error(f"Vision processing error: {e}")
+            return f"[Vision processing error: {str(e)}]"
+
+    async def _call_vllm_vision(self, image_b64: str, prompt: str) -> str:
+        """Call VLLM API with image using OpenAI-compatible vision format."""
+        session = await self._get_session()
+
+        url = f"{self.vllm_url}/v1/chat/completions"
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{image_b64}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens
+        }
+
+        try:
+            req_timeout = aiohttp.ClientTimeout(total=self.timeout)
+            async with session.post(url, json=payload, timeout=req_timeout) as response:
+                if response.status != 200:
+                    error_text = await response.text()
+                    logger.error(f"VLLM error: {response.status} - {error_text}")
+                    return f"[Vision processing failed: {response.status}]"
+
+                result = await response.json()
+                return result["choices"][0]["message"]["content"].strip()
+
+        except asyncio.TimeoutError:
+            logger.error(f"VLLM request timed out after {self.timeout}s")
+            return "[Vision processing timed out]"
+        except aiohttp.ClientError as e:
+            logger.error(f"VLLM connection error: {e}")
             return f"[Vision service unavailable: {str(e)}]"
         except Exception as e:
             logger.error(f"Vision processing error: {e}")

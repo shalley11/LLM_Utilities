@@ -28,6 +28,8 @@ from .config import (
     SUMMARIZATION_TEMPERATURE,
     SUMMARIZATION_MAX_TOKENS,
     SUMMARIZATION_CONNECTION_TIMEOUT,
+    SUMMARIZATION_MAP_CONCURRENT,
+    SUMMARIZATION_REDUCE_CONCURRENT,
 )
 from .prompts import (
     get_batch_summary_prompt,
@@ -201,7 +203,8 @@ async def _summarize_batch_async(
 async def _process_batches_parallel(
     batches: List[List[Dict]],
     config: SummarizerConfig,
-    max_concurrent: int = 5
+    session: aiohttp.ClientSession,
+    max_concurrent: int = SUMMARIZATION_MAP_CONCURRENT
 ) -> List[str]:
     """
     Process multiple batches in parallel using asyncio.gather().
@@ -212,7 +215,7 @@ async def _process_batches_parallel(
     semaphore = asyncio.Semaphore(max_concurrent)
     batch_summaries = [None] * num_batches
 
-    async def process_single_batch(idx: int, batch: List[Dict], session: aiohttp.ClientSession):
+    async def process_single_batch(idx: int, batch: List[Dict]):
         """Process a single batch with semaphore control."""
         async with semaphore:
             content = _prepare_batch_content(batch)
@@ -224,13 +227,11 @@ async def _process_batches_parallel(
             )
             return idx, summary
 
-    timeout = aiohttp.ClientTimeout(total=DEFAULT_TIMEOUT)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        tasks = [
-            process_single_batch(idx, batch, session)
-            for idx, batch in enumerate(batches)
-        ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+    tasks = [
+        process_single_batch(idx, batch)
+        for idx, batch in enumerate(batches)
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
 
     errors = []
     for result in results:
@@ -252,7 +253,8 @@ async def _reduce_summaries_async(
     summaries: List[str],
     config: SummarizerConfig,
     summary_type: str,
-    max_concurrent: int = 3
+    session: aiohttp.ClientSession,
+    max_concurrent: int = SUMMARIZATION_REDUCE_CONCURRENT
 ) -> tuple:
     """Reduce summaries hierarchically."""
     levels = 1
@@ -262,27 +264,24 @@ async def _reduce_summaries_async(
     combined_words = _count_words(combined_text)
     logger.debug(f"[ASYNC_REDUCE] Initial combined words: {combined_words}")
 
-    timeout = aiohttp.ClientTimeout(total=DEFAULT_TIMEOUT)
-
     while combined_words > config.max_words_per_batch and levels < MAX_REDUCE_LEVELS:
         logger.info(f"[ASYNC_REDUCE] Level {levels} | summaries={len(current_summaries)} | combined_words={combined_words}")
 
         # Group summaries into batches
         groups = [current_summaries[i:i+REDUCE_GROUP_SIZE] for i in range(0, len(current_summaries), REDUCE_GROUP_SIZE)]
 
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            semaphore = asyncio.Semaphore(max_concurrent)
+        semaphore = asyncio.Semaphore(max_concurrent)
 
-            async def reduce_group(idx: int, group: List[str]):
-                async with semaphore:
-                    prompt = get_final_combine_prompt(group, "detailed")
-                    return await _call_llm_async(
-                        prompt, config, session,
-                        context=f"reduce_level_{levels}_group_{idx+1}"
-                    )
+        async def reduce_group(idx: int, group: List[str]):
+            async with semaphore:
+                prompt = get_final_combine_prompt(group, "detailed")
+                return await _call_llm_async(
+                    prompt, config, session,
+                    context=f"reduce_level_{levels}_group_{idx+1}"
+                )
 
-            tasks = [reduce_group(idx, group) for idx, group in enumerate(groups)]
-            new_summaries = await asyncio.gather(*tasks)
+        tasks = [reduce_group(idx, group) for idx, group in enumerate(groups)]
+        new_summaries = await asyncio.gather(*tasks)
 
         current_summaries = list(new_summaries)
         combined_text = " ".join(current_summaries)
@@ -292,12 +291,11 @@ async def _reduce_summaries_async(
     # Final combination
     logger.info(f"[ASYNC_REDUCE] Final combine | summaries={len(current_summaries)} | target_type={summary_type}")
 
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        prompt = get_final_combine_prompt(current_summaries, summary_type)
-        final_summary = await _call_llm_async(
-            prompt, config, session,
-            context=f"final_{summary_type}"
-        )
+    prompt = get_final_combine_prompt(current_summaries, summary_type)
+    final_summary = await _call_llm_async(
+        prompt, config, session,
+        context=f"final_{summary_type}"
+    )
 
     return final_summary, levels
 
@@ -306,16 +304,18 @@ async def summarize_chunks_async(
     chunks: List[Dict],
     summary_type: str = "detailed",
     config: Optional[SummarizerConfig] = None,
-    max_concurrent: int = 5
 ) -> Dict:
     """
     Summarize chunks using parallel async processing.
+
+    Uses a single shared aiohttp session across MAP and REDUCE phases
+    for connection reuse. Concurrency is controlled via env vars:
+    SUMMARIZATION_MAP_CONCURRENT and SUMMARIZATION_REDUCE_CONCURRENT.
 
     Args:
         chunks: List of document chunks with 'text' field
         summary_type: brief, bullets, detailed, or executive
         config: Summarization configuration
-        max_concurrent: Maximum concurrent LLM requests
 
     Returns:
         Dictionary with summary and metadata
@@ -329,50 +329,51 @@ async def summarize_chunks_async(
     total_chunks = len(chunks)
     total_words = sum(_count_words(c.get("text", "")) for c in chunks)
 
-    # Check if content fits in single batch (direct summarization)
-    is_small_doc = total_words <= config.max_words_per_batch and total_chunks <= config.max_chunks_per_batch
+    timeout = aiohttp.ClientTimeout(total=DEFAULT_TIMEOUT)
 
-    if is_small_doc:
-        logger.info(f"[SUMMARIZE] Using DIRECT method (single LLM call)")
+    async with aiohttp.ClientSession(timeout=timeout) as session:
 
-        content = _prepare_batch_content(chunks)
-        timeout = aiohttp.ClientTimeout(total=DEFAULT_TIMEOUT)
+        # Check if content fits in single batch (direct summarization)
+        is_small_doc = total_words <= config.max_words_per_batch and total_chunks <= config.max_chunks_per_batch
 
-        async with aiohttp.ClientSession(timeout=timeout) as session:
+        if is_small_doc:
+            logger.info(f"[SUMMARIZE] Using DIRECT method (single LLM call)")
+
+            content = _prepare_batch_content(chunks)
             prompt = get_direct_summary_prompt(content, summary_type)
             summary = await _call_llm_async(prompt, config, session, context=f"direct_{summary_type}")
 
-        elapsed = time.time() - start_time
-        logger.info(f"[SUMMARIZE] END | method=direct | elapsed={elapsed:.2f}s")
+            elapsed = time.time() - start_time
+            logger.info(f"[SUMMARIZE] END | method=direct | elapsed={elapsed:.2f}s")
 
-        return {
-            "summary": summary,
-            "method": "direct",
-            "total_chunks": total_chunks,
-            "total_words": total_words,
-            "batches": 1,
-            "levels": 1,
-            "model": config.model
-        }
+            return {
+                "summary": summary,
+                "method": "direct",
+                "total_chunks": total_chunks,
+                "total_words": total_words,
+                "batches": 1,
+                "levels": 1,
+                "model": config.model
+            }
 
-    # Hierarchical processing with parallel batches
-    logger.info(f"[SUMMARIZE] Using HIERARCHICAL method (map-reduce)")
-    batches = _chunk_into_batches(chunks, config)
-    num_batches = len(batches)
+        # Hierarchical processing with parallel batches
+        logger.info(f"[SUMMARIZE] Using HIERARCHICAL method (map-reduce)")
+        batches = _chunk_into_batches(chunks, config)
+        num_batches = len(batches)
 
-    # MAP PHASE: Summarize each batch in parallel
-    map_start = time.time()
-    batch_summaries = await _process_batches_parallel(batches, config, max_concurrent)
-    map_elapsed = time.time() - map_start
-    logger.info(f"[SUMMARIZE] MAP_PHASE | elapsed={map_elapsed:.2f}s")
+        # MAP PHASE: Summarize each batch in parallel
+        map_start = time.time()
+        batch_summaries = await _process_batches_parallel(batches, config, session)
+        map_elapsed = time.time() - map_start
+        logger.info(f"[SUMMARIZE] MAP_PHASE | elapsed={map_elapsed:.2f}s")
 
-    # REDUCE PHASE: Combine summaries
-    reduce_start = time.time()
-    final_summary, levels = await _reduce_summaries_async(
-        batch_summaries, config, summary_type
-    )
-    reduce_elapsed = time.time() - reduce_start
-    logger.info(f"[SUMMARIZE] REDUCE_PHASE | elapsed={reduce_elapsed:.2f}s | levels={levels}")
+        # REDUCE PHASE: Combine summaries (reuses same session)
+        reduce_start = time.time()
+        final_summary, levels = await _reduce_summaries_async(
+            batch_summaries, config, summary_type, session
+        )
+        reduce_elapsed = time.time() - reduce_start
+        logger.info(f"[SUMMARIZE] REDUCE_PHASE | elapsed={reduce_elapsed:.2f}s | levels={levels}")
 
     total_elapsed = time.time() - start_time
     logger.info(f"[SUMMARIZE] END | batches={num_batches} | elapsed={total_elapsed:.2f}s")
@@ -392,7 +393,6 @@ def summarize_chunks_sync(
     chunks: List[Dict],
     summary_type: str = "detailed",
     config: Optional[SummarizerConfig] = None,
-    max_concurrent: int = 5
 ) -> Dict:
     """
     Synchronous wrapper for parallel summarization.
@@ -404,7 +404,6 @@ def summarize_chunks_sync(
             chunks=chunks,
             summary_type=summary_type,
             config=config,
-            max_concurrent=max_concurrent
         )
     )
 

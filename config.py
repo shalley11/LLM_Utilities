@@ -3,8 +3,15 @@ Global Configuration
 
 Shared settings used across all modules.
 Module-specific settings are in each module's config.py file.
+
+All settings can be overridden via environment variables or a .env file.
+See .env.example for a complete list of configurable variables.
 """
 import os
+from dotenv import load_dotenv
+
+# Load .env file before any os.getenv() calls
+load_dotenv()
 from functools import lru_cache
 
 # Try to import tiktoken for accurate token estimation

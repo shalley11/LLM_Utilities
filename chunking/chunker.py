@@ -50,6 +50,12 @@ class Chunker:
     IMAGE_PATTERN = re.compile(r'!\[image\]\(([^)]+)\)')
     TABLE_PATTERN = re.compile(r'(\|[^\n]+\|\n)+', re.MULTILINE)
 
+    # Boundary detection patterns for semantic splitting (priority order)
+    HEADER_BOUNDARY = re.compile(r'^#{1,6}\s+', re.MULTILINE)
+    PARAGRAPH_BREAK = re.compile(r'\n\s*\n')
+    SENTENCE_END = re.compile(r'[.!?][\s\n]')
+    WORD_BOUNDARY = re.compile(r'\s+')
+
     def __init__(
         self,
         config: Optional[ChunkConfig] = None,
@@ -156,36 +162,181 @@ class Chunker:
     def replace_images_with_descriptions(
         self,
         content: str,
-        image_descriptions: Dict[str, str]
+        image_descriptions: Dict[str, str],
+        image_map: Dict[str, str] = None,
+        image_counter: List[int] = None
     ) -> str:
         """
-        Replace image markdown with descriptions.
+        Replace image markdown with numbered placeholders and descriptions.
 
         Args:
             content: Markdown content with image references
             image_descriptions: Dict mapping paths to descriptions
+            image_map: Dict to populate with placeholder → path mapping
+            image_counter: Single-element list [n] used as mutable counter
 
         Returns:
-            Content with image descriptions instead of paths
+            Content with numbered placeholders and descriptions
         """
+        if image_map is None:
+            image_map = {}
+        if image_counter is None:
+            image_counter = [1]
+
         def replace_image(match):
             image_path = match.group(1)
             description = image_descriptions.get(
                 image_path,
                 f"[Image: {image_path}]"
             )
-            return f"\n[IMAGE DESCRIPTION]: {description}\n"
+            placeholder = f"IMAGE_{image_counter[0]}"
+            image_map[placeholder] = image_path
+            image_counter[0] += 1
+            return f"\n[{placeholder}]: {description}\n"
 
         return self.IMAGE_PATTERN.sub(replace_image, content)
+
+    def find_split_point(self, text: str, target_pos: int, window: int = 50) -> int:
+        """
+        Find the best natural text boundary near target_pos.
+
+        Searches [target_pos - window, target_pos + window] for boundaries
+        in priority order: header > paragraph > sentence > word > exact.
+
+        Args:
+            text: Full text to search within.
+            target_pos: Ideal character position to split at.
+            window: Search distance in each direction.
+
+        Returns:
+            Character index to split at (text[:result] is left side).
+        """
+        search_start = max(0, target_pos - window)
+        search_end = min(len(text), target_pos + window)
+        search_region = text[search_start:search_end]
+
+        # Priority 1: Header boundary
+        for match in self.HEADER_BOUNDARY.finditer(search_region):
+            split_at = search_start + match.start()
+            if split_at > 0:
+                return split_at
+
+        # Priority 2: Paragraph break
+        best = None
+        for match in self.PARAGRAPH_BREAK.finditer(search_region):
+            candidate = search_start + match.end()
+            if best is None or abs(candidate - target_pos) < abs(best - target_pos):
+                best = candidate
+        if best is not None:
+            return best
+
+        # Priority 3: Sentence end
+        best = None
+        for match in self.SENTENCE_END.finditer(search_region):
+            candidate = search_start + match.end()
+            if best is None or abs(candidate - target_pos) < abs(best - target_pos):
+                best = candidate
+        if best is not None:
+            return best
+
+        # Priority 4: Word boundary
+        best = None
+        for match in self.WORD_BOUNDARY.finditer(search_region):
+            candidate = search_start + match.end()
+            if best is None or abs(candidate - target_pos) < abs(best - target_pos):
+                best = candidate
+        if best is not None:
+            return best
+
+        # Fallback: exact position
+        return target_pos
+
+    def split_page_content(self, content: str, chunk_size: int) -> List[str]:
+        """
+        Split a single page's content into segments that fit within chunk_size,
+        splitting at natural text boundaries.
+
+        Args:
+            content: Page content text (images already replaced).
+            chunk_size: Maximum characters per segment.
+
+        Returns:
+            List of text segments, each <= chunk_size.
+        """
+        if len(content) <= chunk_size:
+            return [content]
+
+        segments = []
+        remaining = content
+
+        while len(remaining) > chunk_size:
+            split_pos = self.find_split_point(remaining, chunk_size, window=50)
+
+            # Guarantee progress
+            if split_pos <= 0:
+                split_pos = chunk_size
+
+            segment = remaining[:split_pos].rstrip()
+            remaining = remaining[split_pos:].lstrip()
+
+            if segment:
+                segments.append(segment)
+
+        if remaining.strip():
+            segments.append(remaining)
+
+        return segments if segments else [content]
+
+    def snap_overlap_to_boundary(self, text: str, overlap: int) -> str:
+        """
+        Extract overlap text from the end of a chunk, snapping to a
+        sentence or word boundary instead of arbitrary character position.
+
+        Args:
+            text: Full chunk content to extract overlap from.
+            overlap: Target number of overlap characters.
+
+        Returns:
+            Overlap text starting at a clean boundary.
+        """
+        if overlap <= 0 or not text:
+            return ""
+
+        if len(text) <= overlap:
+            return text
+
+        raw_start = len(text) - overlap
+        search_region = text[raw_start:raw_start + 50]
+
+        # Try sentence boundary first
+        match = self.SENTENCE_END.search(search_region)
+        if match:
+            adjusted = raw_start + match.end()
+            result = text[adjusted:]
+            if result:
+                return result
+
+        # Try word boundary
+        match = self.WORD_BOUNDARY.search(search_region)
+        if match:
+            adjusted = raw_start + match.end()
+            result = text[adjusted:]
+            if result:
+                return result
+
+        return text[raw_start:]
 
     def create_chunks_from_pages(
         self,
         pages: List[ParsedPage],
         document_id: str,
         image_descriptions: Dict[str, str]
-    ) -> List[Chunk]:
+    ) -> Tuple[List[Chunk], Dict[str, str]]:
         """
         Create chunks from parsed pages with overlap.
+
+        Large pages are split at natural text boundaries and overlap
+        snaps to sentence/word boundaries.
 
         Args:
             pages: List of ParsedPage objects
@@ -193,7 +344,8 @@ class Chunker:
             image_descriptions: Dict of image path to description
 
         Returns:
-            List of Chunk objects
+            Tuple of (chunks, image_map) where image_map is
+            placeholder → path mapping (e.g. {"IMAGE_1": "/path/to/img.png"})
         """
         chunks = []
         chunk_size = self.config.chunk_size
@@ -206,11 +358,17 @@ class Chunker:
         item_sequence = 0
         chunk_index = 0
 
+        # Shared across all pages for consistent numbering
+        image_map = {}
+        image_counter = [1]
+
         for page in pages:
-            # Replace images in page content
+            # Replace images in page content with numbered placeholders
             page_content = self.replace_images_with_descriptions(
                 page.content,
-                image_descriptions
+                image_descriptions,
+                image_map,
+                image_counter
             )
 
             # Add page marker
@@ -221,52 +379,152 @@ class Chunker:
 
             current_page_end = page.page_number
 
-            # Check if adding this page exceeds chunk size
-            if len(current_content) + len(page_text) > chunk_size and current_content:
-                # Create chunk from current content
+            # === CASE 1: Single page exceeds chunk_size — split at boundaries ===
+            if len(page_text) > chunk_size:
+                # Flush accumulated content first
+                if current_content:
+                    chunk = self._create_chunk(
+                        document_id=document_id,
+                        chunk_index=chunk_index,
+                        content=current_content,
+                        items=current_items,
+                        page_start=current_page_start,
+                        page_end=current_page_end - 1,
+                        overlap_size=0 if chunk_index == 0 else overlap
+                    )
+                    chunks.append(chunk)
+                    chunk_index += 1
+                    pending_overlap = self.snap_overlap_to_boundary(current_content, overlap) if overlap > 0 else ""
+                else:
+                    pending_overlap = ""
+
+                # Split page into boundary-aware segments
+                sub_segments = self.split_page_content(page_text, chunk_size)
+
+                current_content = ""
+                current_items = []
+                current_page_start = page.page_number
+
+                for seg_idx, segment in enumerate(sub_segments):
+                    if seg_idx < len(sub_segments) - 1:
+                        # Emit non-final segments as complete chunks
+                        seg_content = pending_overlap + segment
+                        seg_overlap_size = len(pending_overlap) if chunk_index > 0 else 0
+
+                        chunk = self._create_chunk(
+                            document_id=document_id,
+                            chunk_index=chunk_index,
+                            content=seg_content,
+                            items=[ContentItem(
+                                item_id=f"{document_id}_item_{item_sequence:05d}",
+                                content_type=ChunkType.TEXT,
+                                content=segment,
+                                page=page.page_number,
+                                sequence=item_sequence
+                            )],
+                            page_start=page.page_number,
+                            page_end=page.page_number,
+                            overlap_size=seg_overlap_size
+                        )
+                        chunks.append(chunk)
+                        chunk_index += 1
+                        item_sequence += 1
+
+                        pending_overlap = self.snap_overlap_to_boundary(segment, overlap) if overlap > 0 else ""
+                    else:
+                        # Last segment: accumulate for potential merging with next page
+                        current_content = pending_overlap + segment
+                        current_page_start = page.page_number
+
+                # Track content items for the page
+                current_items.append(ContentItem(
+                    item_id=f"{document_id}_item_{item_sequence:05d}",
+                    content_type=ChunkType.TEXT,
+                    content=page_content,
+                    page=page.page_number,
+                    sequence=item_sequence
+                ))
+                item_sequence += 1
+
+                for img_path in page.images:
+                    desc = image_descriptions.get(img_path, f"[Image: {img_path}]")
+                    current_items.append(ContentItem(
+                        item_id=f"{document_id}_item_{item_sequence:05d}",
+                        content_type=ChunkType.IMAGE,
+                        content=desc,
+                        original_reference=img_path,
+                        page=page.page_number,
+                        sequence=item_sequence
+                    ))
+                    item_sequence += 1
+
+            # === CASE 2: Adding page overflows — flush and start new chunk ===
+            elif len(current_content) + len(page_text) > chunk_size and current_content:
                 chunk = self._create_chunk(
                     document_id=document_id,
                     chunk_index=chunk_index,
                     content=current_content,
                     items=current_items,
                     page_start=current_page_start,
-                    page_end=current_page_end - 1,  # Previous page
+                    page_end=current_page_end - 1,
                     overlap_size=0 if chunk_index == 0 else overlap
                 )
                 chunks.append(chunk)
                 chunk_index += 1
 
-                # Start new chunk with overlap
-                overlap_content = current_content[-overlap:] if overlap > 0 else ""
+                # Boundary-aware overlap
+                overlap_content = self.snap_overlap_to_boundary(current_content, overlap) if overlap > 0 else ""
+
                 current_content = overlap_content + page_text
                 current_items = []
                 current_page_start = page.page_number
-            else:
-                current_content += page_text
 
-            # Track content items
-            # Add text item
-            current_items.append(ContentItem(
-                item_id=f"{document_id}_item_{item_sequence:05d}",
-                content_type=ChunkType.TEXT,
-                content=page_content,
-                page=page.page_number,
-                sequence=item_sequence
-            ))
-            item_sequence += 1
-
-            # Add image items
-            for img_path in page.images:
-                desc = image_descriptions.get(img_path, f"[Image: {img_path}]")
+                # Track content items
                 current_items.append(ContentItem(
                     item_id=f"{document_id}_item_{item_sequence:05d}",
-                    content_type=ChunkType.IMAGE,
-                    content=desc,
-                    original_reference=img_path,
+                    content_type=ChunkType.TEXT,
+                    content=page_content,
                     page=page.page_number,
                     sequence=item_sequence
                 ))
                 item_sequence += 1
+
+                for img_path in page.images:
+                    desc = image_descriptions.get(img_path, f"[Image: {img_path}]")
+                    current_items.append(ContentItem(
+                        item_id=f"{document_id}_item_{item_sequence:05d}",
+                        content_type=ChunkType.IMAGE,
+                        content=desc,
+                        original_reference=img_path,
+                        page=page.page_number,
+                        sequence=item_sequence
+                    ))
+                    item_sequence += 1
+
+            # === CASE 3: Page fits in current chunk ===
+            else:
+                current_content += page_text
+
+                current_items.append(ContentItem(
+                    item_id=f"{document_id}_item_{item_sequence:05d}",
+                    content_type=ChunkType.TEXT,
+                    content=page_content,
+                    page=page.page_number,
+                    sequence=item_sequence
+                ))
+                item_sequence += 1
+
+                for img_path in page.images:
+                    desc = image_descriptions.get(img_path, f"[Image: {img_path}]")
+                    current_items.append(ContentItem(
+                        item_id=f"{document_id}_item_{item_sequence:05d}",
+                        content_type=ChunkType.IMAGE,
+                        content=desc,
+                        original_reference=img_path,
+                        page=page.page_number,
+                        sequence=item_sequence
+                    ))
+                    item_sequence += 1
 
         # Don't forget the last chunk
         if current_content:
@@ -281,7 +539,7 @@ class Chunker:
             )
             chunks.append(chunk)
 
-        return chunks
+        return chunks, image_map
 
     def _create_chunk(
         self,
@@ -319,7 +577,7 @@ class Chunker:
         document_id: Optional[str] = None,
         image_paths: Optional[List[str]] = None,
         process_images: bool = True
-    ) -> Tuple[List[Chunk], Dict[str, str]]:
+    ) -> Tuple[List[Chunk], Dict[str, str], Dict[str, str]]:
         """
         Main chunking method.
 
@@ -330,7 +588,8 @@ class Chunker:
             process_images: Whether to call vision model for images
 
         Returns:
-            Tuple of (chunks, image_descriptions)
+            Tuple of (chunks, image_descriptions, image_map) where
+            image_map is placeholder → path (e.g. {"IMAGE_1": "/path/img.png"})
         """
         document_id = document_id or str(uuid.uuid4())
 
@@ -353,11 +612,11 @@ class Chunker:
         )
         logger.info(f"Processed {len(image_descriptions)} images")
 
-        # Create chunks
-        chunks = self.create_chunks_from_pages(pages, document_id, image_descriptions)
-        logger.info(f"Created {len(chunks)} chunks")
+        # Create chunks (returns image_map with placeholder → path mapping)
+        chunks, image_map = self.create_chunks_from_pages(pages, document_id, image_descriptions)
+        logger.info(f"Created {len(chunks)} chunks | images_mapped={len(image_map)}")
 
-        return chunks, image_descriptions
+        return chunks, image_descriptions, image_map
 
 
 # Convenience function
@@ -389,7 +648,7 @@ async def chunk_markdown(
 
     chunker = Chunker(config=config)
     try:
-        chunks, _ = await chunker.chunk(
+        chunks, _, _ = await chunker.chunk(
             markdown_text,
             process_images=process_images
         )

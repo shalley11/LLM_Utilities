@@ -150,7 +150,7 @@ class ChunkingService:
         chunker = Chunker(config=config)
 
         try:
-            chunks, image_descriptions = await chunker.chunk(
+            chunks, image_descriptions, _ = await chunker.chunk(
                 markdown_text=request.markdown_text,
                 document_id=request.document_id,
                 image_paths=request.image_paths,

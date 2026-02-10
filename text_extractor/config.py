@@ -13,8 +13,8 @@ import os
 EXTRACTOR_SUPPORTED_FILE_TYPES = {".pdf", ".docx", ".doc", ".txt"}
 
 # Directory settings
-EXTRACTOR_UPLOAD_DIR = os.getenv("EXTRACTOR_UPLOAD_DIR", "/tmp/text_extractor/uploads")
-EXTRACTOR_IMAGE_DIR = os.getenv("EXTRACTOR_IMAGE_DIR", "/tmp/text_extractor/images")
+EXTRACTOR_UPLOAD_DIR = os.getenv("EXTRACTOR_UPLOAD_DIR", "./tmp/text_extractor/uploads")
+EXTRACTOR_IMAGE_DIR = os.getenv("EXTRACTOR_IMAGE_DIR", "./tmp/text_extractor/images")
 
 # =========================
 # Default Extraction Options
