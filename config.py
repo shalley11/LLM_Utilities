@@ -15,11 +15,12 @@ load_dotenv()
 from functools import lru_cache
 
 # Try to import tiktoken for accurate token estimation
+# For airgapped systems, set TIKTOKEN_CACHE_DIR to a directory containing pre-cached encoding files.
 try:
     import tiktoken
     _encoder = tiktoken.get_encoding("cl100k_base")  # GPT-4/Claude compatible
     TIKTOKEN_AVAILABLE = True
-except ImportError:
+except Exception:
     TIKTOKEN_AVAILABLE = False
     _encoder = None
 
